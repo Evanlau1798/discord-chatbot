@@ -14,8 +14,9 @@ from uuid import uuid4
 import requests
 
 from utils.ai_api_logging import log_ai_api_event
+from utils.imagine_config import DEFAULT_IMAGINE_BASE_URL
 
-LOCAL_SUB2API_BASE_URL = "http://127.0.0.1:8890/v1"
+LOCAL_SUB2API_BASE_URL = DEFAULT_IMAGINE_BASE_URL
 
 
 class ImagineAPIError(Exception):

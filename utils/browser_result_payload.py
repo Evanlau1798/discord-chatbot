@@ -3,11 +3,21 @@ from __future__ import annotations
 import json
 
 from utils.browser_result_types import BrowserFetchResult
+from utils.imagine_config import is_image_generation_enabled
 from utils.message_media import build_multimodal_content, sanitize_image_urls
 
-RELIABLE_RESULT_INSTRUCTION = (
+RELIABLE_RESULT_INSTRUCTION_WITH_IMAGE_GENERATION = (
     "請只根據 browserResults 中可讀取的網頁內容與已提供的圖片產生最終 JSON 回覆。"
     "不要再次輸出 browser；必要時仍可輸出 imageGeneration 或 memory。"
+    "若使用者要求找 YouTube 影片或影片連結，只有結果中出現 YouTube watch、youtu.be 或明確影片頁面時才算找到；"
+    "如果只找到論壇、社群或討論串，請把它當作線索並說明尚未確認 direct video URL。"
+    "不要提及已省略的搜尋失敗、CAPTCHA、反機器人驗證、工具錯誤或網站阻擋。"
+)
+RELIABLE_RESULT_INSTRUCTION = (
+    "請只根據 browserResults 中可讀取的網頁內容與已提供的圖片產生最終 JSON 回覆。"
+    "不要再次輸出 browser；必要時仍可輸出 memory。"
+    "若使用者要求找 YouTube 影片或影片連結，只有結果中出現 YouTube watch、youtu.be 或明確影片頁面時才算找到；"
+    "如果只找到論壇、社群或討論串，請把它當作線索並說明尚未確認 direct video URL。"
     "不要提及已省略的搜尋失敗、CAPTCHA、反機器人驗證、工具錯誤或網站阻擋。"
 )
 NO_RELIABLE_RESULT_INSTRUCTION = (
@@ -51,6 +61,8 @@ def build_browser_followup_content(results: list[BrowserFetchResult]) -> str | l
 
 def _browser_instruction(readable_results: list[BrowserFetchResult]) -> str:
     if readable_results:
+        if is_image_generation_enabled():
+            return RELIABLE_RESULT_INSTRUCTION_WITH_IMAGE_GENERATION
         return RELIABLE_RESULT_INSTRUCTION
     return NO_RELIABLE_RESULT_INSTRUCTION
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from utils.browser_client import BrowserToolError
 from utils.browser_result_types import BrowserFetchResult
+from utils.browser_search import plan_search_queries_from_env
 
 
 async def fetch_browser_results(
@@ -44,7 +45,8 @@ def build_browser_error_results(urls: list[str], search_queries: list[str], find
 
 
 def format_browser_notice_targets(urls: list[str], search_queries: list[str], find_requests: list) -> str:
-    targets = [f"搜尋: {query}" for query in search_queries if str(query).strip()]
+    notice_search_queries = plan_search_queries_from_env(search_queries)
+    targets = [f"搜尋: {query}" for query in notice_search_queries if str(query).strip()]
     targets.extend(str(url).strip() for url in urls if str(url).strip())
     targets.extend(
         f"尋找: {request.pattern} @ {request.url}"

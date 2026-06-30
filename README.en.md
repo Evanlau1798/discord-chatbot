@@ -14,7 +14,8 @@ The main usage is simple:
 ## Features
 
 - **Persona chat**
-  - Default persona: `persona/example.json`
+  - Default persona key: `akira`; create `persona/akira.json` or set `DEFAULT_PERSONA_KEY`
+  - `persona/example.json` is only an open-source sample; if it is the only persona, the bot reports that no real persona is configured
   - Add personas in `persona/*.json`
   - Add image-generation visual references in `persona/imagen/*.json`
   - Switch personas with `/persona`
@@ -30,7 +31,9 @@ The main usage is simple:
   - Cached image summaries can be restored into future context
 
 - **Web search and page reading**
-  - Search always goes through SearXNG
+  - Search always goes through SearXNG, with Google and Bing enabled by default
+  - Search results prefer Google sources first and place Bing sources after them
+  - Multiple search queries are merged into one request by default to reduce CAPTCHA risk
   - User-provided URLs are read directly, not searched first
   - Normal pages use HTTP extraction first, then Patchright/Chromium fallback
   - YouTube videos use `yt-dlp` for transcripts
@@ -44,6 +47,7 @@ The main usage is simple:
 
 - **Image generation**
   - Supports a local OpenAI-compatible image API
+  - Set `AI_IMAGINE_ENABLED=1` to enable the image-generation protocol
   - Text replies are still sent if image generation fails
   - By default, image prompts avoid visible text unless the user explicitly asks for it
 
@@ -98,6 +102,27 @@ PY
 ```
 
 See [.env.example](.env.example) for all available variables.
+
+Default search-related settings:
+
+```env
+SEARXNG_ENGINES=google,bing
+SEARXNG_MERGE_QUERIES=1
+SEARXNG_MAX_QUERIES_PER_TURN=1
+SEARXNG_QUERY_COOLDOWN_SECONDS=1
+```
+
+If Google still hits CAPTCHA frequently, configure `outgoing.proxies` in SearXNG `settings.yml`. SearXNG supports multiple proxies for the same protocol and distributes requests round-robin; when proxies are used, search engines see the proxy-side outbound IP.
+
+```yaml
+outgoing:
+  proxies:
+    all://:
+      - http://proxy1:8080
+      - http://proxy2:8080
+```
+
+To enable image generation, set `AI_IMAGINE_ENABLED=1`, `AI_IMAGINE_BASE_URL`, `AI_IMAGINE_API_KEY`, and `AI_IMAGINE_MODEL` in `.env`. When disabled, the bot does not ask the model to output `imageGeneration`.
 
 For private personas, use an ignored filename such as `persona/my.private.json`, then set `DEFAULT_PERSONA_KEY` in `.env` to the file key without `.json`. Do not commit unlicensed scripts, transcripts, or character text to a public repo.
 

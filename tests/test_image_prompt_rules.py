@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from utils.json_response_protocol import build_repair_instruction
 from utils.persona_image_prompt import IMAGE_TEXT_POLICY, merge_persona_image_prompt
@@ -11,9 +12,19 @@ class ImagePromptRuleTests(unittest.TestCase):
     def test_system_prompt_requires_explicit_text_request_for_visible_text(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})
 
-        prompt = PersonaPromptBuilder().build_system_prompt(persona)
+        with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "1"}):
+            prompt = PersonaPromptBuilder().build_system_prompt(persona)
 
         self.assertIn("除非使用者明確指示在圖片中加入特定文字，否則不要加入明文的文字", prompt)
+
+    def test_system_prompt_omits_image_generation_protocol_when_disabled(self):
+        persona = Persona(key="test", name="Test", data={"characterName": "Test"})
+
+        with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "0"}):
+            prompt = PersonaPromptBuilder().build_system_prompt(persona)
+
+        self.assertNotIn("imageGeneration", prompt)
+        self.assertNotIn("需要生圖", prompt)
 
     def test_system_prompt_requires_fast_browser_search_before_persona_reply(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})
@@ -24,11 +35,30 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("不要先輸出 replyText", prompt)
         self.assertIn("browser.searchQuery", prompt)
 
+    def test_system_prompt_requires_cross_language_media_search_queries(self):
+        persona = Persona(key="test", name="Test", data={"characterName": "Test"})
+
+        prompt = PersonaPromptBuilder().build_system_prompt(persona)
+
+        self.assertIn("海外人物、遊戲、實況主、影片、梗圖或片段", prompt)
+        self.assertIn("常用英文名稱", prompt)
+        self.assertIn("最多 3 個 query", prompt)
+        self.assertIn("eating microphone", prompt)
+        self.assertIn("只有搜尋結果中出現 YouTube watch", prompt)
+
     def test_repair_instruction_keeps_image_text_rule(self):
-        instruction = build_repair_instruction()
+        with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "1"}):
+            instruction = build_repair_instruction()
 
         self.assertIn("除非使用者明確指示在圖片中加入特定文字", instruction)
         self.assertIn("imageGeneration.prompt 不要加入明文文字", instruction)
+
+    def test_repair_instruction_omits_image_generation_protocol_when_disabled(self):
+        with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "0"}):
+            instruction = build_repair_instruction()
+
+        self.assertNotIn("imageGeneration", instruction)
+        self.assertNotIn("生圖", instruction)
 
     def test_repair_instruction_keeps_fast_browser_search_rule(self):
         instruction = build_repair_instruction()
@@ -36,6 +66,13 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("需要網頁搜尋", instruction)
         self.assertIn("不要先輸出 replyText", instruction)
         self.assertIn("browser.searchQuery", instruction)
+
+    def test_repair_instruction_keeps_cross_language_media_search_rule(self):
+        instruction = build_repair_instruction()
+
+        self.assertIn("海外人物", instruction)
+        self.assertIn("英文別名", instruction)
+        self.assertIn("最多三個查詢關鍵字", instruction)
 
     def test_merge_prompt_adds_text_policy_without_persona_reference(self):
         prompt = merge_persona_image_prompt("", "a clean portrait")

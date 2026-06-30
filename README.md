@@ -14,7 +14,8 @@
 ## 功能
 
 - **人設對話**
-  - 預設人設是 `persona/example.json`
+  - 預設人設 key 是 `akira`，請建立 `persona/akira.json` 或設定 `DEFAULT_PERSONA_KEY`
+  - `persona/example.json` 只是開源範例；只有 example 時 bot 會提醒尚未設定人設資訊
   - 可在 `persona/*.json` 新增人設
   - 可在 `persona/imagen/*.json` 補充生圖用的角色外觀描述
   - `/persona` 可切換目前使用的人設
@@ -30,7 +31,9 @@
   - 可從快取還原過去圖片訊息的文字摘要
 
 - **上網搜尋與讀網頁**
-  - 搜尋一律走 SearXNG
+  - 搜尋一律走 SearXNG，預設同時使用 Google 與 Bing
+  - 搜尋結果會讓 Google 來源優先，Bing 來源排在後面
+  - 多個搜尋關鍵字預設會合併成單次查詢，降低短時間觸發 CAPTCHA 的機率
   - 使用者貼 URL 時會直接讀 URL，不先搜尋
   - 一般網頁優先用 HTTP reader，必要時用 Patchright/Chromium fallback
   - YouTube 影片會用 `yt-dlp` 擷取字幕
@@ -44,6 +47,7 @@
 
 - **生圖**
   - 可串接 localhost OpenAI-compatible image API
+  - 需設定 `AI_IMAGINE_ENABLED=1` 才會啟用繪圖協定
   - 生圖失敗時仍會保留文字回覆
   - 預設規則是不在圖片中加入明文文字，除非使用者明確要求
 
@@ -99,6 +103,27 @@ PY
 
 更多可用參數請看 [.env.example](.env.example)。
 
+搜尋相關設定預設如下，可依需要調整：
+
+```env
+SEARXNG_ENGINES=google,bing
+SEARXNG_MERGE_QUERIES=1
+SEARXNG_MAX_QUERIES_PER_TURN=1
+SEARXNG_QUERY_COOLDOWN_SECONDS=1
+```
+
+如果 Google 仍頻繁出現 CAPTCHA，應優先在 SearXNG 的 `settings.yml` 設定 `outgoing.proxies`。SearXNG 支援同協定多個 proxy 並以 round-robin 分配請求；使用 proxy 時，真正對搜尋引擎顯示的出口 IP 會由 proxy 端決定。
+
+```yaml
+outgoing:
+  proxies:
+    all://:
+      - http://proxy1:8080
+      - http://proxy2:8080
+```
+
+若要啟用生圖，請在 `.env` 設定 `AI_IMAGINE_ENABLED=1`、`AI_IMAGINE_BASE_URL`、`AI_IMAGINE_API_KEY` 與 `AI_IMAGINE_MODEL`。關閉時 bot 不會在 prompt 中要求模型輸出 `imageGeneration`。
+
 如果你要使用自己的私有人設，可以放在 ignored 檔名，例如 `persona/my.private.json`，再把 `.env` 的 `DEFAULT_PERSONA_KEY` 設成對應檔名去掉 `.json` 後的 key。請不要把未授權作品、台本或角色文本直接提交到公開 repo。
 
 ## 啟動
@@ -107,12 +132,6 @@ PY
 
 ```bash
 python main.py
-```
-
-或使用專案的 tmux 啟動腳本：
-
-```bash
-./start_bot_tmux.sh
 ```
 
 ## Discord 指令
@@ -139,7 +158,7 @@ python main.py
 - `databases/AI_user_choice.pickle`
 - `AIHistory/user_history.pickle`
 
-所以開源後 repo 內沒有資料庫是正常狀態。
+所以 repo 內沒有資料庫是正常狀態。
 
 ## 開發
 

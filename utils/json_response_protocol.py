@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from utils.imagine_config import is_image_generation_enabled
+
 CODE_BLOCK_PATTERN = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 FALLBACK_REPLY = "回覆格式不合法，這次無法正確處理模型回應。"
 
@@ -69,19 +71,33 @@ def build_fallback_response() -> ParsedAIResponse:
 
 
 def build_repair_instruction() -> str:
-    return (
+    image_generation_enabled = is_image_generation_enabled()
+    schema = '{"replyText":"..."'
+    if image_generation_enabled:
+        schema += ',"imageGeneration":{"needed":true,"prompt":"..."}'
+    schema += ',"memory":{"update":true,"content":"..."},"browser":{"searchQuery":"..."}}'
+    parts = [
         "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
-        "格式固定為 {\"replyText\":\"...\",\"imageGeneration\":{\"needed\":true,\"prompt\":\"...\"},"
-        "\"memory\":{\"update\":true,\"content\":\"...\"},\"browser\":{\"searchQuery\":\"...\"}}。"
-        "不需要生圖時省略 imageGeneration；不需要更新記憶時省略 memory；不需要上網時省略 browser。"
+        f"格式固定為 {schema}。",
+    ]
+    if image_generation_enabled:
+        parts.append("不需要生圖時省略 imageGeneration；")
+    parts.extend([
+        "不需要更新記憶時省略 memory；不需要上網時省略 browser。"
         "如果目前請求或前一輪請求包含圖片，請加入 imageUnderstanding: {\"summary\":\"...\",\"visibleText\":[\"...\"],\"details\":[\"...\"]}。"
-        "除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。"
+    ])
+    if image_generation_enabled:
+        parts.append("除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。")
+    parts.extend([
         "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.searchQuery 的精簡查詢關鍵字；"
         "收到 browserResults 後才輸出具有人設語氣的 replyText。"
+        "若前一輪需要搜尋海外人物、遊戲、實況主、影片、梗圖或片段，請使用英文別名、常見英文說法與最多三個查詢關鍵字，"
+        "不要只輸出使用者原文；若使用者指定 YouTube 或影片，請加入 YouTube/youtube.com 與可能的英文標題線索。"
         "除非使用者明確提供 URL，否則上網請優先使用 browser.searchQuery；"
         "需要在指定網頁中尋找文字時可用 browser.find: {\"url\":\"...\",\"pattern\":\"...\"}。"
         "需要查看指定網頁內圖片時，可在 browser 中加入 includeImages: true。"
-    )
+    ])
+    return "".join(parts)
 
 
 def validate_payload(payload: dict[str, Any]) -> ParsedAIResponse:

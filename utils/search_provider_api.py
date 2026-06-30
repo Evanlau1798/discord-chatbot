@@ -12,6 +12,7 @@ SEARXNG_BASE_URL_ENV = "SEARXNG_BASE_URL"
 DEFAULT_SEARXNG_BASE_URL = "http://127.0.0.1:19183"
 SEARXNG_CATEGORIES_ENV = "SEARXNG_CATEGORIES"
 SEARXNG_ENGINES_ENV = "SEARXNG_ENGINES"
+DEFAULT_SEARXNG_ENGINES = "google,bing"
 SEARXNG_LANGUAGE_ENV = "SEARXNG_LANGUAGE"
 SEARXNG_TIME_RANGE_ENV = "SEARXNG_TIME_RANGE"
 SEARXNG_RESULT_LIMIT = 8
@@ -62,7 +63,7 @@ def fetch_searxng_search_result(
         query=query,
         final_url=request_url,
         title="SearXNG Search",
-        error="SearXNG 未回傳可讀搜尋結果。",
+        error=_empty_result_error(payload),
     )
 
 
@@ -80,7 +81,7 @@ def format_searxng_results(payload: dict) -> str:
     if not isinstance(results, list):
         return ""
     blocks = []
-    for item in results[:SEARXNG_RESULT_LIMIT]:
+    for item in sorted(results, key=_searxng_engine_priority)[:SEARXNG_RESULT_LIMIT]:
         if not isinstance(item, dict):
             continue
         title = _normalize_provider_text(item.get("title", ""))
@@ -148,6 +149,32 @@ def _provider_error_result(query: str, final_url: str, title: str, exc: Exceptio
     )
 
 
+def _empty_result_error(payload: dict) -> str:
+    engines = _format_unresponsive_engines(payload.get("unresponsive_engines"))
+    if engines:
+        return f"SearXNG 搜尋引擎暫時不可用: {engines}"
+    return "SearXNG 未回傳可讀搜尋結果。"
+
+
+def _format_unresponsive_engines(value) -> str:
+    if not isinstance(value, list):
+        return ""
+    formatted = []
+    for item in value:
+        if isinstance(item, list) and item:
+            engine = _normalize_provider_text(item[0])
+            reason = _normalize_provider_text(item[1]) if len(item) > 1 else ""
+            if engine and reason:
+                formatted.append(f"{engine} ({reason})")
+            elif engine:
+                formatted.append(engine)
+        elif isinstance(item, str):
+            normalized = _normalize_provider_text(item)
+            if normalized:
+                formatted.append(normalized)
+    return "; ".join(formatted[:5])
+
+
 def _format_searxng_engine(item: dict) -> str:
     engines = item.get("engines")
     if isinstance(engines, list):
@@ -155,6 +182,19 @@ def _format_searxng_engine(item: dict) -> str:
         return f"來源引擎: {normalized}" if normalized else ""
     engine = _normalize_provider_text(item.get("engine", ""))
     return f"來源引擎: {engine}" if engine else ""
+
+
+def _searxng_engine_priority(item) -> int:
+    if not isinstance(item, dict):
+        return 3
+    engines = item.get("engines")
+    values = engines if isinstance(engines, list) else [item.get("engine", "")]
+    normalized = {str(engine).strip().lower() for engine in values if str(engine).strip()}
+    if any("google" in engine for engine in normalized):
+        return 0
+    if any("bing" in engine for engine in normalized):
+        return 1
+    return 2
 
 
 def _normalize_provider_text(text) -> str:

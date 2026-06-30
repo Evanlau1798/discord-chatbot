@@ -15,13 +15,14 @@ from utils.EmbedMessage import SakuraEmbedMsg
 from utils.ai_chat_browser import fetch_browser_results, format_browser_notice_targets
 from utils.ai_chat_settings import AiChatUserSettingsStore
 from utils.ai_chat_context import AiChatContextMixin, MAX_CHAT_TURNS
-from utils.ai_imagine_client import ImagineAPIError, ImagineClient, LOCAL_SUB2API_BASE_URL
+from utils.ai_imagine_client import ImagineAPIError, ImagineClient
 from utils.browser_result_payload import build_browser_followup_content
 from utils.discord_notice_timing import MIN_BROWSER_NOTICE_DISPLAY_SECONDS, wait_for_min_notice_display
 from utils.discord_files import send_content_with_files
 from utils.discord_presence import keep_typing
 from utils.gemini_api import DEFAULT_GEMINI_MODEL, GeminiChatClient, _is_retryable_api_error
 from utils.image_context_cache import ImageContextCache
+from utils.imagine_config import get_imagine_base_url, is_image_generation_enabled
 from utils.json_response_protocol import build_fallback_response, build_repair_instruction, parse_model_response
 from utils.memory_store import MemoryStore
 from utils.persona_image_prompt import PersonaImagePromptStore, merge_persona_image_prompt
@@ -87,6 +88,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
         self.image_context_cache = ImageContextCache()
         self.image_context_cache.cleanup_expired()
         self.browser_client = HeadlessBrowserClient()
+        self.image_generation_enabled = is_image_generation_enabled()
         self.gemini_client = GeminiChatClient(
             api_key=os.getenv("GEMINIAPIKEY") or os.getenv("GEMINI_API_KEY"),
             model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
@@ -176,7 +178,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
                     cached_content,
                 )
             image_status_message = None
-            if parsed.image_generation is not None:
+            if parsed.image_generation is not None and self.image_generation_enabled:
                 image_status_message = await self._upsert_image_status(message, browser_notice, parsed.reply_text)
                 if image_status_message is not None:
                     browser_notice = image_status_message
@@ -352,7 +354,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
         return f"{normalized_reply}\n\n{status_line}".strip()
 
     async def _maybe_generate_image(self, parsed, persona) -> tuple[list[Path], bool]:
-        if parsed.image_generation is None:
+        if parsed.image_generation is None or not self.image_generation_enabled:
             return [], False
         image_prompt = merge_persona_image_prompt(
             self.persona_image_prompt_store.get_prompt(persona),
@@ -433,7 +435,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
         if self.imagine_client is None:
             self.imagine_client = ImagineClient(
                 api_key=os.getenv("AI_IMAGINE_API_KEY"),
-                base_url=os.getenv("AI_IMAGINE_BASE_URL") or LOCAL_SUB2API_BASE_URL,
+                base_url=get_imagine_base_url(),
                 model=os.getenv("AI_IMAGINE_MODEL", ""),
                 api_mode=os.getenv("AI_IMAGINE_API_MODE", "local"),
             )

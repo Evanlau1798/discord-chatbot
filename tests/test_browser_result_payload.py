@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from utils.browser_client import BrowserFetchResult
 from utils.browser_result_payload import (
@@ -71,6 +72,26 @@ class BrowserResultPayloadTests(unittest.TestCase):
         self.assertEqual(payload["payload"]["browserResults"], [])
         self.assertEqual(payload["payload"]["omittedFailedResultCount"], 1)
         self.assertIn("無法取得可靠網頁內容", payload["payload"]["instruction"])
+        self.assertNotIn("不要嘲諷", payload["payload"]["instruction"])
+        self.assertNotIn("冷門", payload["payload"]["instruction"])
+        self.assertNotIn("不要宣稱目標內容不存在", payload["payload"]["instruction"])
+
+    def test_followup_instruction_requires_direct_youtube_url_for_video_requests(self):
+        payload = build_browser_followup_payload([
+            BrowserFetchResult(
+                requested_url="apex hal 吃麥克風 youtube",
+                source_type="search",
+                query="apex hal 吃麥克風 youtube",
+                title="SearXNG Search",
+                text="巴哈姆特討論串\nhttps://forum.gamer.com.tw/C.php?bsn=36072&snA=8654",
+            ),
+        ])
+
+        instruction = payload["payload"]["instruction"]
+
+        self.assertIn("YouTube watch", instruction)
+        self.assertIn("論壇、社群或討論串", instruction)
+        self.assertIn("線索", instruction)
 
     def test_keeps_image_only_result(self):
         payload = build_browser_followup_payload([
@@ -88,6 +109,20 @@ class BrowserResultPayloadTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["imageUrls"], ["https://example.test/cover.jpg"])
         self.assertIn("圖片", payload["payload"]["instruction"])
+
+    def test_followup_instruction_omits_image_generation_when_disabled(self):
+        with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "0"}):
+            payload = build_browser_followup_payload([
+                BrowserFetchResult(
+                    requested_url="https://example.test/article",
+                    source_type="url",
+                    title="Article",
+                    text="Readable content",
+                ),
+            ])
+
+        self.assertNotIn("imageGeneration", payload["payload"]["instruction"])
+        self.assertIn("memory", payload["payload"]["instruction"])
 
     def test_followup_content_includes_image_url_parts(self):
         content = build_browser_followup_content([
