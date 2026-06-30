@@ -122,6 +122,37 @@ class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.content_parts[0]["image_bytes"]["mime_type"], "image/png")
         self.assertTrue(attachment.read_use_cached)
 
+    async def test_video_attachment_media_uses_cached_read_bytes(self):
+        attachment = FakeAttachment(
+            "https://cdn.discordapp.com/attachments/video.mp4",
+            "video/mp4",
+            "video.mp4",
+            data=b"mp4-bytes",
+        )
+
+        media = await collect_message_media(FakeMessage([attachment]), "")
+
+        self.assertEqual(media.image_urls, [])
+        self.assertEqual(media.content_parts[0]["type"], "video_bytes")
+        self.assertEqual(media.content_parts[0]["video_bytes"]["data"], b"mp4-bytes")
+        self.assertEqual(media.content_parts[0]["video_bytes"]["mime_type"], "video/mp4")
+        self.assertEqual(media.content_parts[0]["video_bytes"]["filename"], "video.mp4")
+        self.assertTrue(attachment.read_use_cached)
+
+    async def test_oversized_video_attachment_is_not_read(self):
+        attachment = FakeAttachment(
+            "https://cdn.discordapp.com/attachments/large.mp4",
+            "video/mp4",
+            "large.mp4",
+            data=b"x",
+        )
+        attachment.size = 51 * 1024 * 1024
+
+        media = await collect_message_media(FakeMessage([attachment]), "")
+
+        self.assertEqual(media.content_parts, [])
+        self.assertIsNone(attachment.read_use_cached)
+
     async def test_attachment_media_dedupes_dialogue_url_part(self):
         image_url = "https://example.test/a.jpg"
         attachment = FakeAttachment(image_url, "image/jpeg", "a.jpg", data=b"jpeg-bytes")

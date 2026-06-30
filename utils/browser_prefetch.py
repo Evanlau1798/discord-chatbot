@@ -10,7 +10,7 @@ from utils.browser_result_types import BrowserFetchResult
 from utils.message_media import sanitize_image_urls
 
 MAX_PREFETCH_URLS = 3
-URL_PATTERN = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+URL_PATTERN = re.compile(r"https?://[^\s<>\")\]]+", re.IGNORECASE)
 URL_PUNCTUATION = ".,;:!?)]}'\""
 
 logger = logging.getLogger("discord.extensions.AIChat")

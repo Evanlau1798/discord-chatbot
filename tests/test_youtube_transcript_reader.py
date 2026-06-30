@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import unittest
 
+from utils.youtube_ytdlp_reader import YtdlpMetadataResult
 from utils.youtube_transcript_reader import (
-    FetchedText,
     parse_json3_transcript,
     parse_srv3_transcript,
     parse_youtube_video_id,
@@ -69,64 +69,112 @@ class YoutubeTranscriptReaderTests(unittest.TestCase):
         self.assertEqual(segments[0].end, 3.0)
         self.assertEqual(segments[0].text, "hello world")
 
-    def test_read_youtube_transcript_returns_grouped_browser_result(self):
-        watch_html = _watch_html(
-            caption_tracks=[
-                {
-                    "languageCode": "en",
-                    "kind": "",
-                    "baseUrl": "https://www.youtube.com/api/timedtext?v=abc123xyz00&lang=en",
-                    "name": {"simpleText": "English"},
-                }
-            ],
-        )
+    def test_read_youtube_transcript_uses_ytdlp_caption_url(self):
         json3 = json.dumps({
             "events": [
                 {"tStartMs": 1000, "dDurationMs": 1000, "segs": [{"utf8": "First sentence."}]},
                 {"tStartMs": 2500, "dDurationMs": 1000, "segs": [{"utf8": "Second sentence."}]},
             ]
         })
-        calls = []
+        metadata_calls = []
+        caption_calls = []
 
-        def fetch_text(url: str, timeout_ms: int) -> FetchedText:
-            calls.append(url)
-            if "watch?" in url:
-                return FetchedText(final_url=url, text=watch_html)
-            return FetchedText(final_url=url, text=json3)
+        def fetch_metadata(url: str, timeout_ms: int) -> YtdlpMetadataResult:
+            metadata_calls.append(url)
+            return YtdlpMetadataResult(data={
+                "id": "abc123xyz00",
+                "webpage_url": "https://www.youtube.com/watch?v=abc123xyz00",
+                "title": "Demo Video",
+                "description": "A useful demo description.",
+                "thumbnail": "https://i.ytimg.com/vi/abc123xyz00/maxresdefault.jpg",
+                "subtitles": {},
+                "automatic_captions": {
+                    "en": [
+                        {"ext": "json3", "url": "https://caption.test/en.json3"},
+                        {"ext": "srv3", "url": "https://caption.test/en.srv3"},
+                    ],
+                },
+            })
 
-        result = read_youtube_transcript_url("https://youtu.be/abc123xyz00", 1000, fetch_text=fetch_text)
+        def fetch_text(url: str, timeout_ms: int):
+            caption_calls.append(url)
+            return type("Fetched", (), {"final_url": url, "text": json3, "error": ""})()
+
+        result = read_youtube_transcript_url(
+            "https://youtu.be/abc123xyz00",
+            1000,
+            include_images=True,
+            fetch_text=fetch_text,
+            fetch_metadata=fetch_metadata,
+        )
 
         self.assertIsNotNone(result)
         self.assertEqual(result.content_format, "youtube_transcript")
         self.assertEqual(result.title, "Demo Video")
         self.assertIn("[0:01] First sentence.", result.text)
         self.assertIn("[0:02] Second sentence.", result.text)
-        self.assertTrue(any("fmt=json3" in url for url in calls))
+        self.assertEqual(metadata_calls, ["https://youtu.be/abc123xyz00"])
+        self.assertEqual(caption_calls, ["https://caption.test/en.json3"])
+        self.assertEqual(result.image_urls, ("https://i.ytimg.com/vi/abc123xyz00/maxresdefault.jpg",))
 
-    def test_read_youtube_transcript_falls_back_to_metadata_when_no_captions(self):
-        watch_html = _watch_html(caption_tracks=[])
+    def test_read_youtube_transcript_uses_ytdlp_metadata_when_no_captions(self):
+        def fetch_metadata(url: str, timeout_ms: int) -> YtdlpMetadataResult:
+            return YtdlpMetadataResult(data={
+                "id": "abc123xyz00",
+                "webpage_url": "https://www.youtube.com/watch?v=abc123xyz00",
+                "title": "Demo Video",
+                "description": "A useful demo description.",
+                "thumbnail": "https://i.ytimg.com/vi/abc123xyz00/maxresdefault.jpg",
+                "subtitles": {},
+                "automatic_captions": {},
+            })
 
-        def fetch_text(url: str, timeout_ms: int) -> FetchedText:
-            return FetchedText(final_url=url, text=watch_html)
-
-        result = read_youtube_transcript_url("https://www.youtube.com/watch?v=abc123xyz00", 1000, fetch_text=fetch_text)
+        result = read_youtube_transcript_url(
+            "https://www.youtube.com/watch?v=abc123xyz00",
+            1000,
+            fetch_metadata=fetch_metadata,
+        )
 
         self.assertIsNotNone(result)
         self.assertEqual(result.content_format, "youtube_metadata")
         self.assertIn("Demo Video", result.text)
         self.assertIn("youtube_transcript_unavailable", result.diagnostics)
 
+    def test_read_youtube_transcript_tries_next_ytdlp_caption_when_preferred_is_empty(self):
+        json3 = json.dumps({
+            "events": [
+                {"tStartMs": 1000, "dDurationMs": 1000, "segs": [{"utf8": "English fallback."}]},
+            ]
+        })
 
-def _watch_html(caption_tracks: list[dict]) -> str:
-    player = {
-        "videoDetails": {
-            "title": "Demo Video",
-            "shortDescription": "A useful demo description.",
-            "thumbnail": {"thumbnails": [{"url": "https://i.ytimg.com/vi/abc123xyz00/maxresdefault.jpg"}]},
-        },
-        "captions": {"playerCaptionsTracklistRenderer": {"captionTracks": caption_tracks}},
-    }
-    return f"<html><script>var ytInitialPlayerResponse = {json.dumps(player)};</script></html>"
+        def fetch_metadata(url: str, timeout_ms: int) -> YtdlpMetadataResult:
+            return YtdlpMetadataResult(data={
+                "id": "abc123xyz00",
+                "webpage_url": "https://www.youtube.com/watch?v=abc123xyz00",
+                "title": "Demo Video",
+                "description": "A useful demo description.",
+                "subtitles": {},
+                "automatic_captions": {
+                    "zh-Hant": [{"ext": "json3", "url": "https://caption.test/zh.json3"}],
+                    "en": [{"ext": "json3", "url": "https://caption.test/en.json3"}],
+                },
+            })
+
+        def fetch_text(url: str, timeout_ms: int):
+            text = "" if url.endswith("/zh.json3") else json3
+            return type("Fetched", (), {"final_url": url, "text": text, "error": ""})()
+
+        result = read_youtube_transcript_url(
+            "https://youtu.be/abc123xyz00",
+            1000,
+            fetch_text=fetch_text,
+            fetch_metadata=fetch_metadata,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.content_format, "youtube_transcript")
+        self.assertIn("English fallback.", result.text)
+        self.assertIn("language=en", result.media_notes[0])
 
 
 if __name__ == "__main__":

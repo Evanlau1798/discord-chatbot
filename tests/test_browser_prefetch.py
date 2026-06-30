@@ -21,6 +21,13 @@ class BrowserPrefetchTests(unittest.TestCase):
 
         self.assertEqual(urls, ["https://example.test/a"])
 
+    def test_extracts_markdown_url_when_label_is_same_url(self):
+        urls = extract_prefetch_web_urls(
+            "[https://youtu.be/DYhzv0bOsPo](https://youtu.be/DYhzv0bOsPo)"
+        )
+
+        self.assertEqual(urls, ["https://youtu.be/DYhzv0bOsPo"])
+
 
 if __name__ == "__main__":
     unittest.main()

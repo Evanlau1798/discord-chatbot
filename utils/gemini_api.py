@@ -21,6 +21,7 @@ else:
 
 from utils.ai_api_logging import log_ai_api_event
 from utils.gif_frame_sampler import is_gif_mime_type, sample_gif_frames
+from utils.video_frame_splitter import split_video_bytes
 
 DEFAULT_GEMINI_MODEL = "gemma-4-31b-it"
 REQUEST_TIMEOUT_MS = 180_000
@@ -215,6 +216,8 @@ class GeminiChatClient:
                     parts.extend(self._safe_download_image_parts(image_url))
             elif item.get("type") == "image_bytes":
                 parts.extend(_image_bytes_parts(item.get("image_bytes", {})))
+            elif item.get("type") == "video_bytes":
+                parts.extend(_video_bytes_parts(item.get("video_bytes", {})))
         return parts or [genai_types.Part.from_text(text="")]
 
     def _safe_download_image_parts(self, url: str) -> list:
@@ -269,6 +272,28 @@ def _image_bytes_parts(payload) -> list:
     return _image_data_parts(bytes(data), mime_type)
 
 
+def _video_bytes_parts(payload) -> list:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        return []
+    mime_type = str(payload.get("mime_type") or "application/octet-stream").strip() or "application/octet-stream"
+    filename = str(payload.get("filename") or "").strip()
+    try:
+        split_result = split_video_bytes(bytes(data), mime_type, filename=filename)
+    except Exception as exc:
+        logger.warning("gemini.video_sampling_failed error_type=%s error=%s", type(exc).__name__, exc)
+        return []
+    if split_result is None:
+        logger.warning("gemini.video_sampling_failed source=%s", _safe_source_label(filename or mime_type))
+        return []
+    return [
+        genai_types.Part.from_text(text=_video_sampling_note(split_result, filename)),
+        *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in split_result.frames),
+    ]
+
+
 def _image_data_parts(data: bytes, mime_type: str, *, source_label: str = "") -> list:
     normalized_mime_type = str(mime_type or "application/octet-stream").split(";", 1)[0].strip() or "application/octet-stream"
     if is_gif_mime_type(normalized_mime_type):
@@ -295,9 +320,19 @@ def _image_data_parts(data: bytes, mime_type: str, *, source_label: str = "") ->
 def _gif_sampling_note(sampling) -> str:
     mode = "all" if sampling.sampled_all else "sampled"
     return (
-        f"The following {len(sampling.frames)} image parts are {mode} sampled PNG frames from one animated GIF, "
+        f"The following {len(sampling.frames)} image parts are {mode} sampled image frames from one animated GIF, "
         f"in chronological order. Original GIF frame_count={sampling.frame_count}, duration_ms={sampling.duration_ms}. "
         "Use them together as a temporal sequence."
+    )
+
+
+def _video_sampling_note(split_result, filename: str = "") -> str:
+    mode = "all" if split_result.sampled_all else "sampled"
+    source = f" filename={filename}." if filename else "."
+    return (
+        f"The following {len(split_result.frames)} image parts are {mode} sampled JPEG frames from one video,"
+        f"{source} They are in chronological order. Original video frame_count={split_result.frame_count}, "
+        f"duration_ms={split_result.duration_ms}. Use them together as a temporal sequence."
     )
 
 

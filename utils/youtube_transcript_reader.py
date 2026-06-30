@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Callable
-from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from xml.etree import ElementTree
 
 import requests
@@ -131,27 +131,17 @@ def read_youtube_transcript_url(
     *,
     include_images: bool = False,
     fetch_text: TextFetcher | None = None,
+    fetch_metadata: Callable | None = None,
 ) -> BrowserFetchResult | None:
-    video_id = parse_youtube_video_id(url)
-    if not video_id:
-        return None
-    fetcher = fetch_text or _fetch_text
-    watch_url = WATCH_URL.format(video_id=quote(video_id))
-    fetched = fetcher(watch_url, timeout_ms)
-    if fetched.error or not fetched.text:
-        return None
-    player = _extract_json_assignment(fetched.text, ("ytInitialPlayerResponse",))
-    if not isinstance(player, dict):
-        return None
-    details = player.get("videoDetails") if isinstance(player.get("videoDetails"), dict) else {}
-    title = _clean_text(details.get("title")) or "YouTube video"
-    image_urls = tuple(_extract_thumbnail_urls(details)) if include_images else ()
-    track = select_caption_track(_caption_tracks(player))
-    if track is not None:
-        segments = _fetch_caption_segments(track, video_id, timeout_ms, fetcher)
-        if segments:
-            return _build_transcript_result(url, fetched.final_url or watch_url, title, track, segments, image_urls)
-    return _build_metadata_result(url, fetched.final_url or watch_url, title, details, image_urls)
+    from utils.youtube_ytdlp_reader import read_youtube_transcript_url as read_with_ytdlp
+
+    return read_with_ytdlp(
+        url,
+        timeout_ms,
+        include_images=include_images,
+        fetch_text=fetch_text,
+        fetch_metadata=fetch_metadata,
+    )
 
 
 def _fetch_text(url: str, timeout_ms: int) -> FetchedText:
@@ -185,6 +175,25 @@ def _fetch_caption_segments(track: dict, video_id: str, timeout_ms: int, fetcher
         if segments:
             return segments
     return []
+
+
+def build_youtube_transcript_result(
+    requested_url: str,
+    final_url: str,
+    title: str,
+    language: str,
+    kind: str,
+    segments: list[TranscriptSegment],
+    image_urls: tuple[str, ...] = (),
+) -> BrowserFetchResult:
+    return _build_transcript_result(
+        requested_url,
+        final_url,
+        title,
+        {"languageCode": language, "kind": kind},
+        segments,
+        image_urls,
+    )
 
 
 def _build_transcript_result(
@@ -227,21 +236,39 @@ def _build_metadata_result(
     image_urls: tuple[str, ...],
 ) -> BrowserFetchResult | None:
     description = _clean_text(details.get("shortDescription"))
-    if not title and not description:
+    return build_youtube_metadata_result(requested_url, final_url, title, description, image_urls)
+
+
+def build_youtube_metadata_result(
+    requested_url: str,
+    final_url: str,
+    title: str,
+    description: str,
+    image_urls: tuple[str, ...] = (),
+    *,
+    diagnostics: tuple[str, ...] = ("youtube_transcript_unavailable",),
+) -> BrowserFetchResult | None:
+    clean_title = _clean_text(title)
+    clean_description = _clean_text(description)
+    if not clean_title and not clean_description:
         return None
-    body = "\n".join(part for part in ("YouTube video metadata", f"Title: {title}" if title else "", description) if part)
+    body = "\n".join(
+        part
+        for part in ("YouTube video metadata", f"Title: {clean_title}" if clean_title else "", clean_description)
+        if part
+    )
     text, total_chars, next_start = _truncate_text(body)
     return BrowserFetchResult(
         requested_url=requested_url,
         source_type="url",
         final_url=final_url,
-        title=title,
+        title=clean_title,
         text=text,
         image_urls=image_urls,
         content_format="youtube_metadata",
         total_chars=total_chars,
         next_start_char=next_start,
-        diagnostics=("youtube_transcript_unavailable",),
+        diagnostics=diagnostics,
     )
 
 

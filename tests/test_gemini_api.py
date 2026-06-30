@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from utils import gemini_api
 from utils.gif_frame_sampler import GifFrameSample, GifFrameSamplingResult
+from utils.media_frame_splitter import MediaFrame, MediaSplitResult
 from utils.gemini_api import GeminiChatClient, _estimate_content_chars, _explicit_cache_enabled
 
 
@@ -59,7 +60,7 @@ class GeminiApiTests(unittest.TestCase):
             parts = client._convert_parts(content)
 
         self.assertEqual(parts[0], ("text", "describe this"))
-        self.assertIn("sampled PNG frames", parts[1][1])
+        self.assertIn("sampled image frames", parts[1][1])
         self.assertEqual(parts[2], ("bytes", b"frame-1", "image/png"))
         self.assertEqual(parts[3], ("bytes", b"frame-2", "image/png"))
 
@@ -82,6 +83,35 @@ class GeminiApiTests(unittest.TestCase):
             parts = client._convert_parts(content)
 
         self.assertEqual(parts, [("text", "describe this")])
+
+    def test_convert_parts_expands_inline_video_bytes_to_sampled_frames(self):
+        client = GeminiChatClient.__new__(GeminiChatClient)
+        content = [
+            {"type": "text", "text": "describe this"},
+            {"type": "video_bytes", "video_bytes": {"data": b"mp4-bytes", "mime_type": "video/mp4", "filename": "clip.mp4"}},
+        ]
+        split_result = MediaSplitResult(
+            frames=(
+                MediaFrame(data=b"frame-1", mime_type="image/jpeg", frame_index=0, time_ms=0),
+                MediaFrame(data=b"frame-2", mime_type="image/jpeg", frame_index=30, time_ms=1000),
+            ),
+            frame_count=60,
+            duration_ms=2000,
+            sampled_all=False,
+            source_kind="video",
+        )
+
+        with (
+            patch.object(gemini_api, "genai_types", FakeGenaiTypes),
+            patch.object(gemini_api, "split_video_bytes", return_value=split_result),
+        ):
+            parts = client._convert_parts(content)
+
+        self.assertEqual(parts[0], ("text", "describe this"))
+        self.assertIn("sampled JPEG frames", parts[1][1])
+        self.assertIn("filename=clip.mp4", parts[1][1])
+        self.assertEqual(parts[2], ("bytes", b"frame-1", "image/jpeg"))
+        self.assertEqual(parts[3], ("bytes", b"frame-2", "image/jpeg"))
 
     def test_explicit_cache_auto_skips_gemma_models(self):
         with patch.dict("os.environ", {}, clear=True):

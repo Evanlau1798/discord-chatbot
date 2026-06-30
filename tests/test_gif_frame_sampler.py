@@ -11,21 +11,19 @@ class GifFrameSamplerTests(unittest.TestCase):
         self.assertEqual(select_gif_frame_indices([100] * 5), (0, 1, 2, 3, 4))
 
     def test_selects_all_frames_for_short_gif_within_limit(self):
-        self.assertEqual(select_gif_frame_indices([100] * 12), tuple(range(12)))
+        self.assertEqual(select_gif_frame_indices([100] * 60), tuple(range(60)))
 
     def test_short_gif_with_many_frames_uses_max_frames(self):
-        indices = select_gif_frame_indices([100] * 20)
+        indices = select_gif_frame_indices([100] * 120)
 
-        self.assertEqual(len(indices), 12)
+        self.assertEqual(len(indices), 60)
         self.assertEqual(indices[0], 0)
-        self.assertEqual(indices[-1], 19)
+        self.assertEqual(indices[-1], 119)
 
-    def test_medium_gif_uses_duration_bucket(self):
-        self.assertEqual(len(select_gif_frame_indices([100] * 50)), 8)
-        self.assertEqual(len(select_gif_frame_indices([100] * 80)), 10)
-        self.assertEqual(len(select_gif_frame_indices([100] * 200)), 12)
+    def test_long_gif_uses_sixty_frame_hard_limit(self):
+        self.assertEqual(len(select_gif_frame_indices([100] * 300)), 60)
 
-    def test_samples_short_gif_to_png_frames(self):
+    def test_samples_short_gif_to_jpeg_frames(self):
         Image = _load_pillow_image()
         frames = []
         for color in ("red", "green", "blue", "yellow"):
@@ -47,8 +45,8 @@ class GifFrameSamplerTests(unittest.TestCase):
         self.assertEqual(result.duration_ms, 380)
         self.assertTrue(result.sampled_all)
         self.assertEqual(len(result.frames), 4)
-        self.assertTrue(all(frame.mime_type == "image/png" for frame in result.frames))
-        self.assertTrue(all(frame.data.startswith(b"\x89PNG") for frame in result.frames))
+        self.assertTrue(all(frame.mime_type == "image/jpeg" for frame in result.frames))
+        self.assertTrue(all(frame.data.startswith(b"\xff\xd8") for frame in result.frames))
 
 
 def _load_pillow_image():
