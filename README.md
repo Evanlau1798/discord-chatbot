@@ -110,16 +110,14 @@ SEARXNG_ENGINES=google,bing
 SEARXNG_MERGE_QUERIES=1
 SEARXNG_MAX_QUERIES_PER_TURN=1
 SEARXNG_QUERY_COOLDOWN_SECONDS=1
+SEARXNG_OUTGOING_PROXIES=
+SEARXNG_EXTRA_PROXY_TIMEOUT=10
 ```
 
-如果 Google 仍頻繁出現 CAPTCHA，應優先在 SearXNG 的 `settings.yml` 設定 `outgoing.proxies`。SearXNG 支援同協定多個 proxy 並以 round-robin 分配請求；使用 proxy 時，真正對搜尋引擎顯示的出口 IP 會由 proxy 端決定。
+如果 Google 仍頻繁出現 CAPTCHA，可以在 `.env` 設定 `SEARXNG_OUTGOING_PROXIES`，多個 proxy 用逗號或換行分隔。`./start_searxng.sh` 會把它生成到 SearXNG `settings.yml` 的 `outgoing.proxies`。SearXNG 支援同協定多個 proxy 並以 round-robin 分配請求；使用 proxy 時，真正對搜尋引擎顯示的出口 IP 會由 proxy 端決定。
 
-```yaml
-outgoing:
-  proxies:
-    all://:
-      - http://proxy1:8080
-      - http://proxy2:8080
+```env
+SEARXNG_OUTGOING_PROXIES=http://proxy1:8080,socks5h://proxy2:1080
 ```
 
 若要啟用生圖，請在 `.env` 設定 `AI_IMAGINE_ENABLED=1`、`AI_IMAGINE_BASE_URL`、`AI_IMAGINE_API_KEY` 與 `AI_IMAGINE_MODEL`。關閉時 bot 不會在 prompt 中要求模型輸出 `imageGeneration`。

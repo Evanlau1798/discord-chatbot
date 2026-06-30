@@ -110,16 +110,14 @@ SEARXNG_ENGINES=google,bing
 SEARXNG_MERGE_QUERIES=1
 SEARXNG_MAX_QUERIES_PER_TURN=1
 SEARXNG_QUERY_COOLDOWN_SECONDS=1
+SEARXNG_OUTGOING_PROXIES=
+SEARXNG_EXTRA_PROXY_TIMEOUT=10
 ```
 
-If Google still hits CAPTCHA frequently, configure `outgoing.proxies` in SearXNG `settings.yml`. SearXNG supports multiple proxies for the same protocol and distributes requests round-robin; when proxies are used, search engines see the proxy-side outbound IP.
+If Google still hits CAPTCHA frequently, set `SEARXNG_OUTGOING_PROXIES` in `.env`. Separate multiple proxies with commas or newlines. `./start_searxng.sh` generates SearXNG `settings.yml` with `outgoing.proxies`. SearXNG supports multiple proxies for the same protocol and distributes requests round-robin; when proxies are used, search engines see the proxy-side outbound IP.
 
-```yaml
-outgoing:
-  proxies:
-    all://:
-      - http://proxy1:8080
-      - http://proxy2:8080
+```env
+SEARXNG_OUTGOING_PROXIES=http://proxy1:8080,socks5h://proxy2:1080
 ```
 
 To enable image generation, set `AI_IMAGINE_ENABLED=1`, `AI_IMAGINE_BASE_URL`, `AI_IMAGINE_API_KEY`, and `AI_IMAGINE_MODEL` in `.env`. When disabled, the bot does not ask the model to output `imageGeneration`.
