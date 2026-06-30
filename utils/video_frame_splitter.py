@@ -12,8 +12,8 @@ from pathlib import Path
 
 from utils.media_frame_splitter import FrameSelector, FrameSplitConfig, MediaFrame, MediaSplitResult
 
-DEFAULT_FFMPEG_BIN = "/home/evanlau/.local/bin/ffmpeg"
-DEFAULT_FFPROBE_BIN = "/home/evanlau/.local/bin/ffprobe"
+DEFAULT_FFMPEG_BIN = "ffmpeg"
+DEFAULT_FFPROBE_BIN = "ffprobe"
 FFMPEG_BIN_ENV = "FFMPEG_BIN"
 FFPROBE_BIN_ENV = "FFPROBE_BIN"
 logger = logging.getLogger("discord.utils.video_frame_splitter")
@@ -136,7 +136,8 @@ def split_video_bytes(video_bytes: bytes, mime_type: str, *, filename: str = "")
 
 
 def _resolve_binary(value: str) -> str:
-    return shutil.which(str(value or "").strip()) or ""
+    normalized = os.path.expandvars(os.path.expanduser(str(value or "").strip()))
+    return shutil.which(normalized) or ""
 
 
 def _parse_probe_output(output: str) -> VideoMetadata:

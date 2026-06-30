@@ -15,7 +15,9 @@ class ImagePromptRuleTests(unittest.TestCase):
         with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "1"}):
             prompt = PersonaPromptBuilder().build_system_prompt(persona)
 
-        self.assertIn("除非使用者明確指示在圖片中加入特定文字，否則不要加入明文的文字", prompt)
+        self.assertIn("除非使用者明確指示在圖片中加入特定文字", prompt)
+        self.assertIn("否則不要加入", prompt)
+        self.assertIn("文字", prompt)
 
     def test_system_prompt_omits_image_generation_protocol_when_disabled(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})

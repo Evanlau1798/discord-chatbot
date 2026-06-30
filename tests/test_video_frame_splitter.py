@@ -1,16 +1,43 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from utils.media_frame_splitter import FrameSplitConfig
-from utils.video_frame_splitter import FfmpegVideoFrameSplitter
+from utils.video_frame_splitter import (
+    DEFAULT_FFMPEG_BIN,
+    DEFAULT_FFPROBE_BIN,
+    FfmpegVideoFrameSplitter,
+    _resolve_binary,
+)
 
 
 class FfmpegVideoFrameSplitterTests(unittest.TestCase):
+    def test_default_binaries_are_path_lookup_names(self):
+        with patch.dict(os.environ, {}, clear=True):
+            splitter = FfmpegVideoFrameSplitter(config=FrameSplitConfig())
+
+        self.assertEqual(DEFAULT_FFMPEG_BIN, "ffmpeg")
+        self.assertEqual(DEFAULT_FFPROBE_BIN, "ffprobe")
+        self.assertEqual(splitter.ffmpeg_bin, "ffmpeg")
+        self.assertEqual(splitter.ffprobe_bin, "ffprobe")
+
+    def test_resolve_binary_expands_user_home(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            binary_path = Path(temp_dir) / ".local" / "bin" / "ffmpeg"
+            binary_path.parent.mkdir(parents=True)
+            binary_path.write_text("#!/bin/sh\n", encoding="utf-8")
+            binary_path.chmod(0o755)
+
+            with patch.dict(os.environ, {"HOME": temp_dir}, clear=True):
+                resolved = _resolve_binary("~/.local/bin/ffmpeg")
+
+        self.assertEqual(resolved, str(binary_path))
+
     def test_missing_binaries_return_none(self):
         splitter = FfmpegVideoFrameSplitter(config=FrameSplitConfig(), ffmpeg_bin="/missing/ffmpeg", ffprobe_bin="/missing/ffprobe")
 

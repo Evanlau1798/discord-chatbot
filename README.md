@@ -76,6 +76,8 @@ ffmpeg -version
 ffprobe -version
 ```
 
+如果 `ffmpeg` / `ffprobe` 不在 PATH，可在 `.env` 指定路徑；支援 `~`，例如 `FFMPEG_BIN=~/.local/bin/ffmpeg`。
+
 ## 設定
 
 專案不會提交 `.env`。請複製範例檔後填入自己的 key：

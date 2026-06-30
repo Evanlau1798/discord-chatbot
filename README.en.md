@@ -76,6 +76,8 @@ ffmpeg -version
 ffprobe -version
 ```
 
+If `ffmpeg` / `ffprobe` are not in PATH, set their paths in `.env`; `~` is supported, for example `FFMPEG_BIN=~/.local/bin/ffmpeg`.
+
 ## Configuration
 
 The repo does not commit `.env`. Copy the example file and fill in your own values:

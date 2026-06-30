@@ -17,6 +17,7 @@ from utils.ai_api_logging import log_ai_api_event
 from utils.imagine_config import DEFAULT_IMAGINE_BASE_URL
 
 LOCAL_SUB2API_BASE_URL = DEFAULT_IMAGINE_BASE_URL
+IMAGINE_GENERATION_TIMEOUT = (10, 300)
 
 
 class ImagineAPIError(Exception):
@@ -59,7 +60,7 @@ class ImagineClient:
             request_meta={"url": endpoint, "api_mode": self.resolved_api_mode},
         )
         try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=(10, 180))
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=IMAGINE_GENERATION_TIMEOUT)
         except requests.RequestException as exc:
             _log_imagine_error("images_generations", self.model, started_at, exc)
             raise ImagineAPIError(f"Imagine API 請求失敗: {exc}") from exc
