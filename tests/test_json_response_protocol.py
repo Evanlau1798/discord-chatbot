@@ -6,6 +6,34 @@ from utils.json_response_protocol import BrowserFindRequest, ImageUnderstandingB
 
 
 class JsonResponseProtocolBrowserTests(unittest.TestCase):
+    def test_browser_youtube_search_query_is_parsed(self):
+        parsed = parse_model_response(
+            '{"browser":{"youtubeSearchQuery":"Apex Hal eating microphone"}}'
+        )
+
+        self.assertEqual(parsed.reply_text, "")
+        self.assertEqual(parsed.browser.youtube_search_queries, ["Apex Hal eating microphone"])
+        self.assertEqual(parsed.browser.search_queries, [])
+
+    def test_browser_youtube_search_queries_are_deduped_and_limited(self):
+        parsed = parse_model_response(
+            """
+            {
+              "browser": {
+                "youtubeSearchQueries": [
+                  "first",
+                  "first",
+                  "second",
+                  "third",
+                  "fourth"
+                ]
+              }
+            }
+            """
+        )
+
+        self.assertEqual(parsed.browser.youtube_search_queries, ["first", "second", "third"])
+
     def test_browser_find_object_is_parsed(self):
         parsed = parse_model_response(
             '{"browser":{"find":{"url":"https://example.test/docs","pattern":"install"}}}'

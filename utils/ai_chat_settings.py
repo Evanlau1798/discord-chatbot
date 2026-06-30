@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import pickle
 
+from utils.default_persona import get_default_persona_key
+
 DEFAULT_SETTINGS_PATH = "./databases/AI_user_choice.pickle"
-DEFAULT_PERSONA_KEY = os.getenv("DEFAULT_PERSONA_KEY", "akira").strip() or "akira"
 UNSET = object()
 
 
@@ -61,11 +62,12 @@ class AiChatUserSettingsStore:
 
     @staticmethod
     def _normalize_setting(setting) -> dict:
+        default_persona_key = get_default_persona_key()
         if isinstance(setting, bool):
-            return {"persona": DEFAULT_PERSONA_KEY}
+            return {"persona": default_persona_key}
         if not isinstance(setting, dict):
-            return {"persona": DEFAULT_PERSONA_KEY}
-        return {"persona": _normalize_persona(setting.get("persona")) or DEFAULT_PERSONA_KEY}
+            return {"persona": default_persona_key}
+        return {"persona": _normalize_persona(setting.get("persona")) or default_persona_key}
 
 
 def _normalize_persona(persona) -> str | None:

@@ -156,6 +156,73 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(search_planner.received_queries, ["台北 天氣"])
         self.assertIsNone(browser_client.fetched_targets)
 
+    async def test_youtube_search_uses_ytdlp_searcher_without_searxng(self):
+        youtube_result = BrowserFetchResult(
+            requested_url="Apex Hal eating microphone",
+            source_type="youtube_search",
+            query="Apex Hal eating microphone",
+            title="YouTube Search",
+            text="1. Clip\nURL: https://www.youtube.com/watch?v=abc123xyz00",
+            content_format="youtube_search_results",
+        )
+        browser_client = FakeBrowserClient()
+        search_planner = FakeSearchPlanner()
+        received_queries = []
+
+        def youtube_searcher(query: str, timeout_ms: int) -> BrowserFetchResult:
+            received_queries.append(query)
+            return youtube_result
+
+        client = WebToolClient(
+            timeout_ms=1000,
+            browser_client=browser_client,
+            search_planner=search_planner,
+            youtube_searcher=youtube_searcher,
+        )
+
+        results = await client.fetch_urls_and_searches([], [], youtube_search_queries=["Apex Hal eating microphone"])
+
+        self.assertEqual(results, [youtube_result])
+        self.assertEqual(received_queries, ["Apex Hal eating microphone"])
+        self.assertEqual(search_planner.received_queries, [])
+        self.assertIsNone(browser_client.fetched_targets)
+
+    async def test_youtube_search_queries_are_limited_and_throttled(self):
+        browser_client = FakeBrowserClient()
+        search_planner = FakeSearchPlanner()
+        received_queries = []
+
+        def youtube_searcher(query: str, timeout_ms: int) -> BrowserFetchResult:
+            received_queries.append(query)
+            return BrowserFetchResult(
+                requested_url=query,
+                source_type="youtube_search",
+                query=query,
+                text=f"Result for {query}",
+            )
+
+        client = WebToolClient(
+            timeout_ms=1000,
+            browser_client=browser_client,
+            search_planner=search_planner,
+            youtube_searcher=youtube_searcher,
+        )
+        env = {
+            "YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN": "2",
+            "YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS": "1",
+        }
+        with patch.dict("os.environ", env, clear=True), patch("utils.web_tool_client.asyncio.sleep") as sleep:
+            results = await client.fetch_urls_and_searches(
+                [],
+                [],
+                youtube_search_queries=["first", "second", "third"],
+            )
+
+        self.assertEqual([result.query for result in results], ["first", "second"])
+        self.assertEqual(received_queries, ["first", "second"])
+        sleep.assert_called_once_with(1.0)
+        self.assertEqual(search_planner.received_queries, [])
+
     async def test_search_result_does_not_force_browser_fetch(self):
         provider_result = BrowserFetchResult(
             requested_url="台北 天氣",

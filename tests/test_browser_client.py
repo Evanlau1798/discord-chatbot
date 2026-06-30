@@ -159,7 +159,7 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fetch_searxng.call_args.args[1], "http://127.0.0.1:19183")
         self.assertEqual(fetch_searxng.call_args.kwargs["engines"], "google,bing")
 
-    async def test_multiple_search_queries_are_merged_into_one_request_by_default(self):
+    async def test_multiple_search_queries_use_first_three_by_default_with_cooldown(self):
         queries = [
             "hal apex eating microphone youtube",
             "hal apex mic clipping youtube",
@@ -168,6 +168,36 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
             "apex hal 爆音 youtube",
         ]
         with patch.dict(os.environ, {}, clear=True):
+            search_planner = SearchPlanner(timeout_ms=1000)
+            with patch("utils.browser_search.asyncio.sleep") as sleep, patch(
+                "utils.browser_search.fetch_searxng_search_result"
+            ) as fetch_searxng:
+                fetch_searxng.side_effect = [
+                    BrowserFetchResult(requested_url="q1", source_type="search", query="q1", text="first"),
+                    BrowserFetchResult(requested_url="q2", source_type="search", query="q2", text="second"),
+                    BrowserFetchResult(requested_url="q3", source_type="search", query="q3", text="third"),
+                    AssertionError("fourth query should be skipped by the default per-turn limit"),
+                ]
+                search_results = await search_planner.search_many(queries)
+
+        self.assertEqual(len(search_results), 3)
+        self.assertEqual([
+            call.args[0]
+            for call in fetch_searxng.call_args_list
+        ], [
+            "hal apex eating microphone youtube",
+            "hal apex mic clipping youtube",
+            "hal apex mic distortion youtube",
+        ])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 1.0])
+
+    async def test_search_queries_can_be_merged_when_enabled(self):
+        queries = [
+            "hal apex eating microphone youtube",
+            "hal apex mic clipping youtube",
+            "apex hal 爆音 youtube",
+        ]
+        with patch.dict(os.environ, {"SEARXNG_MERGE_QUERIES": "1"}, clear=True):
             search_planner = SearchPlanner(timeout_ms=1000)
             with patch("utils.browser_search.fetch_searxng_search_result") as fetch_searxng:
                 fetch_searxng.return_value = BrowserFetchResult(
@@ -178,13 +208,12 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
                     title="SearXNG Search",
                     text="ImperialHal clip\nhttps://www.youtube.com/watch?v=example",
                 )
-                search_results = await search_planner.search_many(queries)
+                await search_planner.search_many(queries)
 
-        self.assertEqual(len(search_results), 1)
-        fetch_searxng.assert_called_once()
         merged_query = fetch_searxng.call_args.args[0]
         self.assertIn("hal apex eating microphone youtube", merged_query)
-        self.assertIn(" OR ", merged_query)
+        self.assertIn(", ", merged_query)
+        self.assertNotIn(" OR ", merged_query)
         self.assertIn("apex hal 爆音 youtube", merged_query)
 
     async def test_search_queries_are_limited_and_throttled_when_merge_disabled(self):
@@ -209,7 +238,7 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call.args[0] for call in fetch_searxng.call_args_list], ["q1", "q2"])
         sleep.assert_called_once_with(1.0)
 
-    def test_browser_notice_displays_merged_search_query(self):
+    def test_browser_notice_displays_first_three_search_queries_by_default(self):
         with patch.dict(os.environ, {}, clear=True):
             text = format_browser_notice_targets(
                 [],
@@ -217,12 +246,27 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
                     "hal apex eating microphone youtube",
                     "hal apex mic clipping youtube",
                     "hal apex mic distortion youtube",
+                    "apex hal 吃麥克風 youtube",
                 ],
                 [],
             )
 
-        self.assertEqual(text.count("搜尋:"), 1)
-        self.assertIn(" OR ", text)
+        self.assertEqual(text.count("搜尋:"), 3)
+        self.assertIn("hal apex eating microphone youtube", text)
+        self.assertIn("hal apex mic clipping youtube", text)
+        self.assertIn("hal apex mic distortion youtube", text)
+        self.assertNotIn("apex hal 吃麥克風 youtube", text)
+        self.assertNotIn(" OR ", text)
+
+    def test_browser_notice_displays_youtube_search_query(self):
+        text = format_browser_notice_targets(
+            [],
+            [],
+            [],
+            youtube_search_queries=["Apex Hal eating microphone"],
+        )
+
+        self.assertEqual(text, "YouTube搜尋: Apex Hal eating microphone")
 
     async def test_obsolete_search_provider_env_is_ignored(self):
         env = {"BROWSER_SEARCH_PROVIDER": "bing"}

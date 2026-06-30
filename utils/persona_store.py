@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from utils.default_persona import DEFAULT_PERSONA_KEY_ENV, get_default_persona_key
 from utils.imagine_config import is_image_generation_enabled
 
 PERSONA_DIR = Path("persona")
-DEFAULT_PERSONA_KEY = os.getenv("DEFAULT_PERSONA_KEY", "akira").strip() or "akira"
 MAX_PERSONA_PROMPT_CHARS = 8000
 
 
@@ -33,14 +32,14 @@ class PersonaStore:
         return personas
 
     def resolve(self, value: str | None) -> Persona | None:
-        normalized = _normalize_key(value) or DEFAULT_PERSONA_KEY
+        normalized = _normalize_key(value) or get_default_persona_key()
         for persona in self.list_personas():
             if normalized in {_normalize_key(persona.key), _normalize_key(persona.name)}:
                 return persona
         return None
 
     def default_persona(self) -> Persona | None:
-        return self.resolve(DEFAULT_PERSONA_KEY)
+        return self.resolve(get_default_persona_key())
 
     def _load_persona(self, path: Path) -> Persona | None:
         try:
@@ -106,8 +105,9 @@ def _json_output_rules(image_generation_enabled: bool) -> str:
         parts.append("需要生圖時才輸出 imageGeneration: {needed: true, prompt: ...}；不需要時省略整個區塊。")
     parts.extend([
         "需要上網查詢最新資料、一般網路資訊或未提供 URL 的資料時，優先輸出 browser: {searchQuery: ...} 或 {searchQueries: [...]}；此時可省略 replyText。"
+        "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser: {youtubeSearchQuery: ...}；此時可省略 replyText。"
         "如果使用者內容需要網頁搜尋或最新資料，第一輪不要先輸出 replyText、不要用人設語氣鋪陳，"
-        "直接輸出 browser.searchQuery 或 browser.searchQueries 的精簡查詢關鍵字；收到 browserResults 後才依人設輸出最終 replyText。",
+        "直接輸出 browser.searchQuery、browser.searchQueries 或 browser.youtubeSearchQuery 的精簡查詢關鍵字；收到 browserResults 後才依人設輸出最終 replyText。",
         _search_query_rules(),
         "只有使用者明確提供 URL、網址或要求查看指定網頁時，才使用 browser: {link: url} 或 {links: [url1, url2]}。"
         "如果 payload.prefetchedBrowserContext 已包含使用者明確 URL 的可讀網頁附件，優先直接根據該內容回答；"
@@ -124,12 +124,15 @@ def _json_output_rules(image_generation_enabled: bool) -> str:
 
 def _search_query_rules() -> str:
     return (
-        "產生 browser.searchQuery/searchQueries 時，請先把使用者需求改寫成搜尋引擎友善的關鍵字，不要只逐字翻譯使用者原文。"
+        "產生 browser.searchQuery/searchQueries 或 browser.youtubeSearchQuery 時，請先把使用者需求改寫成搜尋友善的關鍵字，不要只逐字翻譯使用者原文。"
         "若使用者要找海外人物、遊戲、實況主、影片、梗圖或片段，必須加入常用英文名稱、ID、隊名、作品英文名或平台常用稱呼；"
+        "短暱稱、多義詞或單字代稱太泛時，不要只搜尋該詞；請搭配使用者已提供的領域、作品、平台、隊伍、內容類型與語意線索。"
+        "若不知道正式全名、帳號或 ID，請不要自行猜測；改用上下文限定詞提高精準度。"
         "優先輸出 1 個精準英文 query，最多 3 個 query，必要時保留 1 個使用者原語言 query。"
-        "將口語描述改寫成英文常見說法與同義詞，例如「吃麥克風」可查 eating microphone、eats mic、mic-eating；"
-        "「爆音」可查 mic clipping、mic distortion。"
-        "若使用者指定 YouTube、yt、影片、剪輯或 shorts，query 應包含 YouTube 或 youtube.com；"
+        "如果輸出多個 query，第一個 query 必須是最精準且可單獨執行的主查詢；"
+        "不要把不同語言備援、寬泛同義詞或 fallback 混進第一個 query。"
+        "將口語描述改寫成英文常見說法與同義詞"
+        "若使用者指定 YouTube、yt、影片、剪輯或 shorts，優先使用 browser.youtubeSearchQuery；query 不必硬塞 youtube.com，但要保留平台、人物、作品與片段語意線索。"
         "需要同義詞時請盡量放在同一個 query，不要大量拆成多次搜尋。"
         "若使用者要求找影片連結，只有搜尋結果中出現 YouTube watch、youtu.be 或明確影片頁面時才算找到；"
         "如果只找到論壇、社群或討論串，請說明那只是線索，不要宣稱已找到影片。"
@@ -144,7 +147,7 @@ def _memory_rules() -> str:
         "即使看到多位參與者記憶，memory.update 也只能更新本輪 currentConversationTarget 也就是目前觸發者的長期記憶。"
         "請主動判斷是否有值得長期保留的新資訊，例如個性、穩定偏好、稱呼、重要設定、長期目標、固定事實或使用者明確要求你記住的內容。"
         "需要新增、修正或整理長期記憶時，如記憶對話對象的說話習慣與個性等，才輸出 memory: {update: true, content: ...}。"
-        "使用者沒有任何對應的記憶時，可以新增記憶。"
+        "使用者沒有任何對應的記憶時，可以且鼓勵新增記憶，像是說話習慣等。"
         "content 必須是完整且精簡的更新後記憶摘要，不是單次追加片段。"
         "不要每次對話都更新記憶；普通寒暄、短期任務、臨時情緒、一次性問題或無長期價值的內容，請省略 memory。"
         "不要記錄密碼、token、金鑰、隱私敏感資訊或使用者未明確希望長期保存的敏感內容。"
@@ -164,10 +167,11 @@ def _persona_rules(persona: Persona) -> str:
 
 
 def _missing_default_persona_message() -> str:
+    default_persona_key = get_default_persona_key()
     return (
-        f"尚未設定人設資訊：找不到預設人設 {DEFAULT_PERSONA_KEY}。"
-        f"請新增 persona/{DEFAULT_PERSONA_KEY}.json，或在 .env 設定 DEFAULT_PERSONA_KEY。"
-        "persona/example.json 只是開源範例，不會作為正式預設人設。"
+        f"尚未設定人設資訊：找不到預設人設 {default_persona_key}。"
+        f"請新增 persona/{default_persona_key}.json，或在 .env 設定 {DEFAULT_PERSONA_KEY_ENV}。"
+        "repo 預設人設 key 是 example；正式部署可用 .env 指定自己的預設人設。"
     )
 
 

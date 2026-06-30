@@ -40,12 +40,18 @@ class BrowserFindRequest:
 class BrowserBlock:
     urls: list[str]
     search_queries: list[str]
+    youtube_search_queries: list[str]
     find_requests: list[BrowserFindRequest]
     include_images: bool = False
 
     @property
     def targets(self) -> list[str]:
-        return [*self.search_queries, *self.urls, *(request.url for request in self.find_requests)]
+        return [
+            *self.search_queries,
+            *self.youtube_search_queries,
+            *self.urls,
+            *(request.url for request in self.find_requests),
+        ]
 
 
 @dataclass(frozen=True)
@@ -75,7 +81,7 @@ def build_repair_instruction() -> str:
     schema = '{"replyText":"..."'
     if image_generation_enabled:
         schema += ',"imageGeneration":{"needed":true,"prompt":"..."}'
-    schema += ',"memory":{"update":true,"content":"..."},"browser":{"searchQuery":"..."}}'
+    schema += ',"memory":{"update":true,"content":"..."},"browser":{"searchQuery":"...","youtubeSearchQuery":"..."}}'
     parts = [
         "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
         f"格式固定為 {schema}。",
@@ -90,9 +96,11 @@ def build_repair_instruction() -> str:
         parts.append("除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。")
     parts.extend([
         "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.searchQuery 的精簡查詢關鍵字；"
+        "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser.youtubeSearchQuery；"
         "收到 browserResults 後才輸出具有人設語氣的 replyText。"
         "若前一輪需要搜尋海外人物、遊戲、實況主、影片、梗圖或片段，請使用英文別名、常見英文說法與最多三個查詢關鍵字，"
-        "不要只輸出使用者原文；若使用者指定 YouTube 或影片，請加入 YouTube/youtube.com 與可能的英文標題線索。"
+        "不要只輸出使用者原文；第一個 query 必須是可單獨執行的最精準主查詢。"
+        "若使用者指定 YouTube 或影片，請使用 browser.youtubeSearchQuery 並加入可能的英文標題線索。"
         "除非使用者明確提供 URL，否則上網請優先使用 browser.searchQuery；"
         "需要在指定網頁中尋找文字時可用 browser.find: {\"url\":\"...\",\"pattern\":\"...\"}。"
         "需要查看指定網頁內圖片時，可在 browser 中加入 includeImages: true。"
@@ -167,13 +175,15 @@ def _parse_browser(value) -> BrowserBlock | None:
         raise ValueError("browser must be an object")
     urls = _collect_browser_urls(value)
     search_queries = _collect_browser_search_queries(value)
+    youtube_search_queries = _collect_browser_youtube_search_queries(value)
     find_requests = _collect_browser_find_requests(value)
     include_images = _optional_bool(value.get("includeImages", False), "browser.includeImages")
-    if not urls and not search_queries and not find_requests:
+    if not urls and not search_queries and not youtube_search_queries and not find_requests:
         return None
     return BrowserBlock(
         urls=urls[:5],
         search_queries=search_queries[:5],
+        youtube_search_queries=youtube_search_queries[:3],
         find_requests=find_requests[:5],
         include_images=include_images,
     )
@@ -213,6 +223,26 @@ def _collect_browser_search_queries(value: dict) -> list[str]:
     for item in raw_values:
         if not isinstance(item, str):
             raise ValueError("browser search queries must be strings")
+        normalized = item.strip()
+        if normalized and normalized not in queries:
+            queries.append(normalized)
+    return queries
+
+
+def _collect_browser_youtube_search_queries(value: dict) -> list[str]:
+    raw_values = []
+    for key in ("youtubeSearchQueries", "ytSearchQueries"):
+        item = value.get(key)
+        if isinstance(item, list):
+            raw_values.extend(item)
+    for key in ("youtubeSearchQuery", "ytSearchQuery"):
+        item = value.get(key)
+        if isinstance(item, str):
+            raw_values.append(item)
+    queries = []
+    for item in raw_values:
+        if not isinstance(item, str):
+            raise ValueError("browser YouTube search queries must be strings")
         normalized = item.strip()
         if normalized and normalized not in queries:
             queries.append(normalized)

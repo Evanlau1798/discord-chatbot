@@ -8,6 +8,28 @@ from utils.persona_store import Persona
 
 PERSONA_IMAGE_DIR = Path("persona/imagen")
 MAX_IMAGE_PROMPT_CHARS = 6000
+IMAGE_STYLE_POLICY = (
+    "When generating or editing 2D anime-style illustrations, use a polished modern anime illustration style "
+    "with clean line art, controlled anime shading, clear depth, and readable forms.\n\n"
+    "Do not make the image completely flat. Preserve a natural sense of volume, lighting direction, and spatial "
+    "separation between the character, foreground, and background. Use soft directional light, subtle ambient "
+    "shading, gentle contact shadows, and restrained cast shadows when needed to ground the subject in the scene.\n\n"
+    "Avoid overly heavy, muddy, harsh, or high-contrast shadows. Shadows should never dominate the image or obscure "
+    "important facial features, hair details, clothing design, or background elements. Keep the overall image "
+    "bright, clean, airy, and visually readable.\n\n"
+    "Use light-to-moderate anime-style shading to define form. Shading may be softly blended or clean cel-shaded, "
+    "but it must remain elegant, controlled, and low-to-medium contrast. Prefer clear value grouping, soft "
+    "gradients, atmospheric depth, and foreground/background separation over dark dramatic shadow masses.\n\n"
+    "Avoid by default: cinematic lighting, noir lighting, horror lighting, dark fantasy lighting, excessive rim "
+    "lighting, harsh spotlighting, heavy cast shadows, black shadow masses, muddy shading, extreme contrast, "
+    "overpowered volumetric light, glossy 3D rendering, hyper-realistic skin texture, and painterly over-rendered "
+    "shadows.\n\n"
+    "Preferred visual direction: clean 2D anime illustration, polished anime coloring, soft controlled lighting, "
+    "subtle depth, clear form definition, bright readable composition, gentle ambient shadows, restrained "
+    "highlights, and light airy atmosphere.\n\n"
+    "Only use dramatic shadows, strong contrast, noir lighting, or dark cinematic lighting when the user explicitly "
+    "requests that style."
+)
 IMAGE_TEXT_POLICY = (
     "Text policy: Do not include readable text, captions, labels, logos, signs, handwriting, "
     "letters, numbers, or UI text in the image unless the user explicitly asks for specific visible text."
@@ -55,12 +77,13 @@ class PersonaImagePromptStore:
 def merge_persona_image_prompt(image_prompt: str, generated_prompt: str) -> str:
     normalized_image_prompt = str(image_prompt or "").strip()
     normalized_generated_prompt = str(generated_prompt or "").strip()
+    base_policy = f"{IMAGE_STYLE_POLICY}\n\n{IMAGE_TEXT_POLICY}"
     if not normalized_image_prompt:
-        return f"{IMAGE_TEXT_POLICY}\n\nUser image request:\n{normalized_generated_prompt}".strip()
+        return f"{base_policy}\n\nUser image request:\n{normalized_generated_prompt}".strip()
     return (
+        f"{base_policy}\n\n"
         "Use the following character visual reference as stable identity constraints.\n"
         f"{normalized_image_prompt}\n\n"
-        f"{IMAGE_TEXT_POLICY}\n\n"
         "User image request:\n"
         f"{normalized_generated_prompt}"
     ).strip()

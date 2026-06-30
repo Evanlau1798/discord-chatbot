@@ -19,10 +19,11 @@ from utils.search_provider_api import (
 SEARXNG_MAX_QUERIES_PER_TURN_ENV = "SEARXNG_MAX_QUERIES_PER_TURN"
 SEARXNG_QUERY_COOLDOWN_SECONDS_ENV = "SEARXNG_QUERY_COOLDOWN_SECONDS"
 SEARXNG_MERGE_QUERIES_ENV = "SEARXNG_MERGE_QUERIES"
-DEFAULT_SEARXNG_MAX_QUERIES_PER_TURN = 1
+DEFAULT_SEARXNG_MAX_QUERIES_PER_TURN = 3
 DEFAULT_SEARXNG_QUERY_COOLDOWN_SECONDS = 1.0
 MAX_MERGED_QUERY_TERMS = 5
 MAX_MERGED_QUERY_CHARS = 500
+MERGED_QUERY_SEPARATOR = ", "
 
 
 class SearchPlanner:
@@ -35,7 +36,7 @@ class SearchPlanner:
         self.searxng_engines = self.searxng_engines or DEFAULT_SEARXNG_ENGINES
         self.searxng_language = os.getenv(SEARXNG_LANGUAGE_ENV, "zh-TW").strip() or "zh-TW"
         self.searxng_time_range = os.getenv(SEARXNG_TIME_RANGE_ENV, "").strip()
-        self.merge_queries = _parse_bool_env(SEARXNG_MERGE_QUERIES_ENV, default=True)
+        self.merge_queries = _parse_bool_env(SEARXNG_MERGE_QUERIES_ENV, default=False)
         self.max_queries_per_turn = _parse_int_env(
             SEARXNG_MAX_QUERIES_PER_TURN_ENV,
             default=DEFAULT_SEARXNG_MAX_QUERIES_PER_TURN,
@@ -88,7 +89,7 @@ class SearchPlanner:
 
 
 def plan_search_queries_from_env(queries: list[str]) -> list[str]:
-    merge_queries = _parse_bool_env(SEARXNG_MERGE_QUERIES_ENV, default=True)
+    merge_queries = _parse_bool_env(SEARXNG_MERGE_QUERIES_ENV, default=False)
     max_queries = _parse_int_env(
         SEARXNG_MAX_QUERIES_PER_TURN_ENV,
         default=DEFAULT_SEARXNG_MAX_QUERIES_PER_TURN,
@@ -111,7 +112,7 @@ def plan_search_queries(queries: list[str], *, merge_queries: bool, max_queries:
 def _merge_search_queries(queries: list[str]) -> str:
     merged = ""
     for query in queries:
-        candidate = query if not merged else f"{merged} OR {query}"
+        candidate = query if not merged else f"{merged}{MERGED_QUERY_SEPARATOR}{query}"
         if len(candidate) > MAX_MERGED_QUERY_CHARS:
             return merged or query[:MAX_MERGED_QUERY_CHARS].rstrip()
         merged = candidate

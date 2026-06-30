@@ -14,8 +14,8 @@ The main usage is simple:
 ## Features
 
 - **Persona chat**
-  - Default persona key: `akira`; create `persona/akira.json` or set `DEFAULT_PERSONA_KEY`
-  - `persona/example.json` is only an open-source sample; if it is the only persona, the bot reports that no real persona is configured
+  - Repo default persona key: `example`
+  - Set `DEFAULT_PERSONA_KEY` in `.env` to choose the actual default persona file for your deployment
   - Add personas in `persona/*.json`
   - Add image-generation visual references in `persona/imagen/*.json`
   - Switch personas with `/persona`
@@ -33,10 +33,10 @@ The main usage is simple:
 - **Web search and page reading**
   - Search always goes through SearXNG, with Google and Bing enabled by default
   - Search results prefer Google sources first and place Bing sources after them
-  - Multiple search queries are merged into one request by default to reduce CAPTCHA risk
+  - Multiple search queries execute up to 3 queries by default, with a 1-second delay between searches
   - User-provided URLs are read directly, not searched first
   - Normal pages use HTTP extraction first, then Patchright/Chromium fallback
-  - YouTube videos use `yt-dlp` for transcripts
+  - YouTube videos use `yt-dlp` for transcripts; YouTube video-link searches also prefer `yt-dlp`
   - X/Twitter posts are read from public metadata when possible
 
 - **Image, GIF, and video understanding**
@@ -57,7 +57,7 @@ The main usage is simple:
 - Discord Bot token
 - Google GenAI API key
 - SearXNG search service
-- `yt-dlp` for YouTube transcripts
+- `yt-dlp` for YouTube transcripts and video search
 - `ffmpeg` / `ffprobe` for video attachment frame sampling
 - Patchright Chromium for browser fallback
 
@@ -107,12 +107,19 @@ Default search-related settings:
 
 ```env
 SEARXNG_ENGINES=google,bing
-SEARXNG_MERGE_QUERIES=1
-SEARXNG_MAX_QUERIES_PER_TURN=1
+SEARXNG_MERGE_QUERIES=0
+SEARXNG_MAX_QUERIES_PER_TURN=3
 SEARXNG_QUERY_COOLDOWN_SECONDS=1
 SEARXNG_OUTGOING_PROXIES=
 SEARXNG_EXTRA_PROXY_TIMEOUT=10
+YOUTUBE_SEARCH_LIMIT=5
+YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN=1
+YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
+YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
+
+By default, queries are not merged. The bot executes up to the first 3 model-provided search queries with a 1-second delay between each search. Set `SEARXNG_MERGE_QUERIES=1` only when you explicitly want multiple queries merged.
+YouTube video search runs only 1 query per turn by default, with a 1-second `yt-dlp` request sleep. In practice, one precise query with the top 5 YouTube results is usually enough.
 
 If Google still hits CAPTCHA frequently, set `SEARXNG_OUTGOING_PROXIES` in `.env`. Separate multiple proxies with commas or newlines. `./start_searxng.sh` generates SearXNG `settings.yml` with `outgoing.proxies`. SearXNG supports multiple proxies for the same protocol and distributes requests round-robin; when proxies are used, search engines see the proxy-side outbound IP.
 

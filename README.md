@@ -14,8 +14,8 @@
 ## 功能
 
 - **人設對話**
-  - 預設人設 key 是 `akira`，請建立 `persona/akira.json` 或設定 `DEFAULT_PERSONA_KEY`
-  - `persona/example.json` 只是開源範例；只有 example 時 bot 會提醒尚未設定人設資訊
+  - repo 預設人設 key 是 `example`
+  - 可在 `.env` 設定 `DEFAULT_PERSONA_KEY` 指定實際預設使用的人設檔案
   - 可在 `persona/*.json` 新增人設
   - 可在 `persona/imagen/*.json` 補充生圖用的角色外觀描述
   - `/persona` 可切換目前使用的人設
@@ -33,10 +33,10 @@
 - **上網搜尋與讀網頁**
   - 搜尋一律走 SearXNG，預設同時使用 Google 與 Bing
   - 搜尋結果會讓 Google 來源優先，Bing 來源排在後面
-  - 多個搜尋關鍵字預設會合併成單次查詢，降低短時間觸發 CAPTCHA 的機率
+  - 多個搜尋關鍵字預設最多執行 3 個，且每次搜尋間隔 1 秒
   - 使用者貼 URL 時會直接讀 URL，不先搜尋
   - 一般網頁優先用 HTTP reader，必要時用 Patchright/Chromium fallback
-  - YouTube 影片會用 `yt-dlp` 擷取字幕
+  - YouTube 影片會用 `yt-dlp` 擷取字幕；找 YouTube 影片連結時也會優先用 `yt-dlp` 搜尋
   - X/Twitter 貼文會嘗試讀取公開文字與圖片 metadata
 
 - **圖片 / GIF / 影片理解**
@@ -57,7 +57,7 @@
 - Discord Bot token
 - Google GenAI API key
 - SearXNG 搜尋服務
-- `yt-dlp`：YouTube 字幕擷取
+- `yt-dlp`：YouTube 字幕擷取與影片搜尋
 - `ffmpeg` / `ffprobe`：影片附件抽幀
 - Patchright Chromium：網頁 browser fallback
 
@@ -107,12 +107,19 @@ PY
 
 ```env
 SEARXNG_ENGINES=google,bing
-SEARXNG_MERGE_QUERIES=1
-SEARXNG_MAX_QUERIES_PER_TURN=1
+SEARXNG_MERGE_QUERIES=0
+SEARXNG_MAX_QUERIES_PER_TURN=3
 SEARXNG_QUERY_COOLDOWN_SECONDS=1
 SEARXNG_OUTGOING_PROXIES=
 SEARXNG_EXTRA_PROXY_TIMEOUT=10
+YOUTUBE_SEARCH_LIMIT=5
+YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN=1
+YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
+YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
+
+預設不合併 query，而是依序執行模型輸出的前 3 個搜尋關鍵字，每次間隔 1 秒；若要合併多個 query，可把 `SEARXNG_MERGE_QUERIES` 設為 `1`。
+YouTube 影片搜尋預設每輪只執行 1 個 query，並讓 `yt-dlp` request 間隔 1 秒；通常讓模型產生一個精準 query，再取前 5 個 YouTube 結果就夠用。
 
 如果 Google 仍頻繁出現 CAPTCHA，可以在 `.env` 設定 `SEARXNG_OUTGOING_PROXIES`，多個 proxy 用逗號或換行分隔。`./start_searxng.sh` 會把它生成到 SearXNG `settings.yml` 的 `outgoing.proxies`。SearXNG 支援同協定多個 proxy 並以 round-robin 分配請求；使用 proxy 時，真正對搜尋引擎顯示的出口 IP 會由 proxy 端決定。
 

@@ -38,7 +38,7 @@ class FakeBrowserClient:
         self.results = results or []
         self.received_urls = []
 
-    async def fetch_urls_and_searches(self, urls, search_queries, find_requests=None, include_images=False):
+    async def fetch_urls_and_searches(self, urls, search_queries, find_requests=None, include_images=False, **kwargs):
         self.received_urls = list(urls)
         return self.results
 

@@ -172,6 +172,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
                     raw_response,
                     parsed.browser.urls,
                     parsed.browser.search_queries,
+                    parsed.browser.youtube_search_queries,
                     parsed.browser.find_requests,
                     parsed.browser.include_images,
                     message,
@@ -232,14 +233,23 @@ class AiChat(AiChatContextMixin, commands.Cog):
         raw_response: str,
         urls: list[str],
         search_queries: list[str],
+        youtube_search_queries: list[str],
         find_requests: list,
         include_images: bool,
         message: discord.Message,
         cached_content: str | None,
     ):
-        browser_notice = await self._send_browser_notice(message, urls, search_queries, find_requests)
+        browser_notice = await self._send_browser_notice(message, urls, search_queries, youtube_search_queries, find_requests)
         browser_notice_sent_at = asyncio.get_running_loop().time() if browser_notice is not None else None
-        browser_results = await fetch_browser_results(self.browser_client, urls, search_queries, find_requests, logger, include_images)
+        browser_results = await fetch_browser_results(
+            self.browser_client,
+            urls,
+            search_queries,
+            find_requests,
+            logger,
+            include_images,
+            youtube_search_queries=youtube_search_queries,
+        )
         await self._set_browser_reading_notice(browser_notice, browser_notice_sent_at)
         followup_messages = request_messages + [
             {"role": "assistant", "content": raw_response},
@@ -303,8 +313,21 @@ class AiChat(AiChatContextMixin, commands.Cog):
             logger.debug("ai_chat.retry_notice_send_failed", exc_info=True)
             return retry_notice
 
-    async def _send_browser_notice(self, message: discord.Message, urls: list[str], search_queries: list[str], find_requests: list) -> discord.Message | None:
-        content = f"-# {LOADING_EMOJI} 正在上網查詢資料: {format_browser_notice_targets(urls, search_queries, find_requests)}"
+    async def _send_browser_notice(
+        self,
+        message: discord.Message,
+        urls: list[str],
+        search_queries: list[str],
+        youtube_search_queries: list[str],
+        find_requests: list,
+    ) -> discord.Message | None:
+        targets = format_browser_notice_targets(
+            urls,
+            search_queries,
+            find_requests,
+            youtube_search_queries=youtube_search_queries,
+        )
+        content = f"-# {LOADING_EMOJI} 正在上網查詢資料: {targets}"
         try:
             return await message.reply(content=content[:1900], mention_author=False)
         except discord.HTTPException:

@@ -14,9 +14,15 @@ from utils.browser_search import SearchPlanner
 from utils.http_page_fetcher import HttpPageText, fetch_http_page_text
 from utils.json_response_protocol import BrowserFindRequest
 from utils.url_readers import read_special_url
+from utils.youtube_search_reader import (
+    plan_youtube_search_queries_from_env,
+    search_youtube_videos,
+    youtube_query_cooldown_seconds_from_env,
+)
 
 Target = BrowserTarget
 HttpFetcher = Callable[[str, int], HttpPageText]
+YoutubeSearcher = Callable[[str, int], BrowserFetchResult]
 FIND_EXCERPT_CHARS = 1200
 
 
@@ -28,11 +34,13 @@ class WebToolClient:
         browser_client: PatchrightBrowserClient | None = None,
         search_planner: SearchPlanner | None = None,
         http_fetcher: HttpFetcher = fetch_http_page_text,
+        youtube_searcher: YoutubeSearcher = search_youtube_videos,
     ):
         self.timeout_ms = timeout_ms
         self.browser_client = browser_client or PatchrightBrowserClient(timeout_ms)
         self.search_planner = search_planner or SearchPlanner(timeout_ms)
         self.http_fetcher = http_fetcher
+        self.youtube_searcher = youtube_searcher
 
     async def fetch_many(self, urls: list[str]) -> list[BrowserFetchResult]:
         return await self.fetch_urls_and_searches(urls, [])
@@ -46,7 +54,9 @@ class WebToolClient:
         search_queries: list[str],
         find_requests: list[BrowserFindRequest] | None = None,
         include_images: bool = False,
+        youtube_search_queries: list[str] | None = None,
     ) -> list[BrowserFetchResult]:
+        youtube_results = await self._fetch_youtube_searches(youtube_search_queries or [])
         search_results = await self.search_planner.search_many(search_queries)
         explicit_url_targets = [build_url_target(url) for url in urls if str(url or "").strip()]
         targets = dedupe_targets(explicit_url_targets)
@@ -57,7 +67,18 @@ class WebToolClient:
             else []
         )
         find_results = await self._fetch_find_requests(find_requests or [])
-        return [*search_results, *http_results, *browser_results, *find_results]
+        return [*youtube_results, *search_results, *http_results, *browser_results, *find_results]
+
+    async def _fetch_youtube_searches(self, queries: list[str]) -> list[BrowserFetchResult]:
+        results = []
+        planned_queries = plan_youtube_search_queries_from_env(queries)
+        cooldown_seconds = youtube_query_cooldown_seconds_from_env()
+        for index, query in enumerate(planned_queries):
+            if index > 0 and cooldown_seconds > 0:
+                await asyncio.sleep(cooldown_seconds)
+            result = await asyncio.to_thread(self.youtube_searcher, query, self.timeout_ms)
+            results.append(result)
+        return results
 
     async def _fetch_http_first_targets(self, targets: list[Target], include_images: bool) -> tuple[list[BrowserFetchResult], list[Target]]:
         http_results = []
