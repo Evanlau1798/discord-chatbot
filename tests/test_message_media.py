@@ -80,6 +80,17 @@ class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(urls, [gif_url])
 
+    def test_collects_custom_emoji_webp_urls_from_dialogue(self):
+        urls = collect_message_image_urls(
+            FakeMessage(),
+            "看這兩個 <:Squirtle:1301183362861371504> <a:amongus_black:820709254843072522>",
+        )
+
+        self.assertEqual(urls, [
+            "https://cdn.discordapp.com/emojis/1301183362861371504.webp?size=96",
+            "https://cdn.discordapp.com/emojis/820709254843072522.webp?size=96&animated=true",
+        ])
+
     def test_collects_supported_gif_page_url_as_source(self):
         urls = collect_message_source_urls(FakeMessage(), "https://tenor.com/view/test-gif-12345")
 
@@ -171,6 +182,17 @@ class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(media.image_urls, [gif_url])
         self.assertEqual(media.content_parts, [{"type": "image_url", "image_url": {"url": gif_url}}])
+
+    async def test_custom_emoji_media_adds_image_url_part_and_dedupes_url(self):
+        emoji_url = "https://cdn.discordapp.com/emojis/1301183362861371504.webp?size=96"
+
+        media = await collect_message_media(
+            FakeMessage(),
+            f"這個表情 <:Squirtle:1301183362861371504> {emoji_url}",
+        )
+
+        self.assertEqual(media.image_urls, [emoji_url])
+        self.assertEqual(media.content_parts, [{"type": "image_url", "image_url": {"url": emoji_url}}])
 
     async def test_resolves_supported_gif_page_url_from_dialogue(self):
         page_url = "https://tenor.com/view/test-gif-12345"

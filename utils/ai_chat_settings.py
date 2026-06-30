@@ -4,7 +4,7 @@ import os
 import pickle
 
 DEFAULT_SETTINGS_PATH = "./databases/AI_user_choice.pickle"
-DEFAULT_PERSONA_KEY = "akira"
+DEFAULT_PERSONA_KEY = os.getenv("DEFAULT_PERSONA_KEY", "example").strip() or "example"
 UNSET = object()
 
 

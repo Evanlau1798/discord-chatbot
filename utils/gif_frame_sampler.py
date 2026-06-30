@@ -33,8 +33,9 @@ class GifFrameSamplingResult:
     sampled_all: bool
 
 
-class GifFrameSplitter:
-    def __init__(self, config: FrameSplitConfig | None = None):
+class AnimatedImageFrameSplitter:
+    def __init__(self, allowed_formats: set[str], config: FrameSplitConfig | None = None):
+        self.allowed_formats = {str(item or "").upper() for item in allowed_formats}
         self.config = config or FrameSplitConfig(hard_frame_limit=MAX_GIF_SAMPLE_FRAMES)
         self.selector = FrameSelector(self.config)
         self.encoder = FrameEncoder(self.config)
@@ -49,7 +50,7 @@ class GifFrameSplitter:
         except (OSError, UnidentifiedImageError):
             return None
         try:
-            if str(getattr(image, "format", "") or "").upper() != "GIF":
+            if str(getattr(image, "format", "") or "").upper() not in self.allowed_formats:
                 return None
             return self._split_open_image(image, max_frames=max_frames)
         finally:
@@ -90,12 +91,30 @@ class GifFrameSplitter:
         )
 
 
+class GifFrameSplitter(AnimatedImageFrameSplitter):
+    def __init__(self, config: FrameSplitConfig | None = None):
+        super().__init__({"GIF"}, config=config)
+
+
+class WebpFrameSplitter(AnimatedImageFrameSplitter):
+    def __init__(self, config: FrameSplitConfig | None = None):
+        super().__init__({"WEBP"}, config=config)
+
+
 def is_gif_mime_type(mime_type: str) -> bool:
     return str(mime_type or "").split(";", 1)[0].strip().lower() == "image/gif"
 
 
+def is_webp_mime_type(mime_type: str) -> bool:
+    return str(mime_type or "").split(";", 1)[0].strip().lower() == "image/webp"
+
+
 def sample_gif_frames(image_bytes: bytes, *, max_frames: int = MAX_GIF_SAMPLE_FRAMES) -> GifFrameSamplingResult | None:
     return GifFrameSplitter().split(image_bytes, max_frames=max_frames)
+
+
+def sample_webp_frames(image_bytes: bytes, *, max_frames: int = MAX_GIF_SAMPLE_FRAMES) -> GifFrameSamplingResult | None:
+    return WebpFrameSplitter().split(image_bytes, max_frames=max_frames)
 
 
 def select_gif_frame_indices(durations_ms: list[int] | tuple[int, ...], *, max_frames: int = MAX_GIF_SAMPLE_FRAMES) -> tuple[int, ...]:

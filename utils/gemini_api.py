@@ -20,7 +20,7 @@ else:
     GENAI_IMPORT_ERROR = None
 
 from utils.ai_api_logging import log_ai_api_event
-from utils.gif_frame_sampler import is_gif_mime_type, sample_gif_frames
+from utils.gif_frame_sampler import is_gif_mime_type, is_webp_mime_type, sample_gif_frames, sample_webp_frames
 from utils.video_frame_splitter import split_video_bytes
 
 DEFAULT_GEMINI_MODEL = "gemma-4-31b-it"
@@ -314,6 +314,22 @@ def _image_data_parts(data: bytes, mime_type: str, *, source_label: str = "") ->
             genai_types.Part.from_text(text=_gif_sampling_note(sampling)),
             *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
         ]
+    if is_webp_mime_type(normalized_mime_type):
+        try:
+            sampling = sample_webp_frames(data)
+        except Exception as exc:
+            logger.warning(
+                "gemini.webp_sampling_failed source=%s error_type=%s error=%s",
+                _safe_source_label(source_label),
+                type(exc).__name__,
+                exc,
+            )
+            sampling = None
+        if sampling is not None:
+            return [
+                genai_types.Part.from_text(text=_webp_sampling_note(sampling)),
+                *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
+            ]
     return [genai_types.Part.from_bytes(data=data, mime_type=normalized_mime_type)]
 
 
@@ -323,6 +339,15 @@ def _gif_sampling_note(sampling) -> str:
         f"The following {len(sampling.frames)} image parts are {mode} sampled image frames from one animated GIF, "
         f"in chronological order. Original GIF frame_count={sampling.frame_count}, duration_ms={sampling.duration_ms}. "
         "Use them together as a temporal sequence."
+    )
+
+
+def _webp_sampling_note(sampling) -> str:
+    mode = "all" if sampling.sampled_all else "sampled"
+    return (
+        f"The following {len(sampling.frames)} image parts are {mode} sampled image frames from one WebP image or animation, "
+        f"in chronological order. Original WebP frame_count={sampling.frame_count}, duration_ms={sampling.duration_ms}. "
+        "Use them together as a temporal sequence when multiple frames are present."
     )
 
 

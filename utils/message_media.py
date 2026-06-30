@@ -15,10 +15,12 @@ MAX_ATTACHMENT_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_ATTACHMENT_VIDEO_BYTES = 50 * 1024 * 1024
 MAX_MEDIA_PAGE_BYTES = 512 * 1024
 IMAGE_URL_PATTERN = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+CUSTOM_EMOJI_PATTERN = re.compile(r"<(?P<animated>a?):(?P<name>[A-Za-z0-9_]{1,64}):(?P<id>\d{15,25})>")
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif")
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm", ".m4v")
 IMAGE_PUNCTUATION = ".,;:!?)]}'\""
 SUPPORTED_MEDIA_PAGE_HOSTS = {"tenor.com", "www.tenor.com", "giphy.com", "www.giphy.com"}
+DISCORD_EMOJI_CDN_BASE = "https://cdn.discordapp.com/emojis"
 META_TAG_PATTERN = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
 HTML_ATTR_PATTERN = re.compile(r"([a-zA-Z_:.-]+)\s*=\s*([\"'])(.*?)\2", re.DOTALL)
 JSON_IMAGE_URL_PATTERN = re.compile(r'"(?:contentUrl|thumbnailUrl)"\s*:\s*"([^"]+)"')
@@ -41,6 +43,10 @@ def collect_message_image_urls(message, dialogue: str, limit: int = MAX_IMAGE_UR
     urls = sanitize_image_urls(attachment_urls, limit=limit)
     remaining = max(0, limit - len(urls))
     for url in _collect_embed_image_urls(message, limit=remaining):
+        if url not in urls:
+            urls.append(url)
+    remaining = max(0, limit - len(urls))
+    for url in sanitize_image_urls(_extract_custom_emoji_urls(dialogue), limit=remaining, require_image_hint=True):
         if url not in urls:
             urls.append(url)
     remaining = max(0, limit - len(urls))
@@ -94,6 +100,12 @@ async def collect_message_media(message, dialogue: str, limit: int = MAX_IMAGE_U
             })
     remaining = max(0, limit - len(content_parts))
     for url in _collect_embed_image_urls(message, limit=remaining):
+        if url in image_urls:
+            continue
+        image_urls.append(url)
+        content_parts.append(_image_url_part(url))
+    remaining = max(0, limit - len(content_parts))
+    for url in sanitize_image_urls(_extract_custom_emoji_urls(dialogue), limit=remaining, require_image_hint=True):
         if url in image_urls:
             continue
         image_urls.append(url)
@@ -159,6 +171,18 @@ def _extract_image_urls_from_text(text: str) -> list[str]:
         normalized = match.rstrip(IMAGE_PUNCTUATION)
         if _has_image_extension(normalized):
             urls.append(normalized)
+    return urls
+
+
+def _extract_custom_emoji_urls(text: str) -> list[str]:
+    urls = []
+    for match in CUSTOM_EMOJI_PATTERN.finditer(str(text or "")):
+        emoji_id = match.group("id")
+        url = f"{DISCORD_EMOJI_CDN_BASE}/{emoji_id}.webp?size=96"
+        if match.group("animated"):
+            url = f"{url}&animated=true"
+        if url not in urls:
+            urls.append(url)
     return urls
 
 

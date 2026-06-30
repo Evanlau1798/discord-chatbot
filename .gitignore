@@ -14,3 +14,5 @@ AIHistory/
 databases/
 *.pyc
 __pycache__
+persona/*.private.json
+persona/imagen/*.private.json

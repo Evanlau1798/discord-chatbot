@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 PERSONA_DIR = Path("persona")
-DEFAULT_PERSONA_KEY = "akira"
+DEFAULT_PERSONA_KEY = os.getenv("DEFAULT_PERSONA_KEY", "example").strip() or "example"
 MAX_PERSONA_PROMPT_CHARS = 8000
 
 

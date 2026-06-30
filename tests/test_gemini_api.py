@@ -64,6 +64,33 @@ class GeminiApiTests(unittest.TestCase):
         self.assertEqual(parts[2], ("bytes", b"frame-1", "image/png"))
         self.assertEqual(parts[3], ("bytes", b"frame-2", "image/png"))
 
+    def test_convert_parts_expands_inline_webp_bytes_to_sampled_frames(self):
+        client = GeminiChatClient.__new__(GeminiChatClient)
+        content = [
+            {"type": "text", "text": "describe this"},
+            {"type": "image_bytes", "image_bytes": {"data": b"webp-bytes", "mime_type": "image/webp"}},
+        ]
+        sampling = GifFrameSamplingResult(
+            frames=(
+                GifFrameSample(data=b"frame-1", mime_type="image/jpeg", frame_index=0, time_ms=0),
+                GifFrameSample(data=b"frame-2", mime_type="image/jpeg", frame_index=1, time_ms=100),
+            ),
+            frame_count=2,
+            duration_ms=200,
+            sampled_all=True,
+        )
+
+        with (
+            patch.object(gemini_api, "genai_types", FakeGenaiTypes),
+            patch.object(gemini_api, "sample_webp_frames", return_value=sampling, create=True),
+        ):
+            parts = client._convert_parts(content)
+
+        self.assertEqual(parts[0], ("text", "describe this"))
+        self.assertIn("WebP", parts[1][1])
+        self.assertEqual(parts[2], ("bytes", b"frame-1", "image/jpeg"))
+        self.assertEqual(parts[3], ("bytes", b"frame-2", "image/jpeg"))
+
     def test_estimate_content_chars_ignores_inline_image_bytes(self):
         content = [
             {"type": "text", "text": "hello"},
