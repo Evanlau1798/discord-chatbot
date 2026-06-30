@@ -4,6 +4,8 @@
 
 A personal AI chatbot for Discord. It supports personas, memory, web search, URL reading, image/GIF/video understanding, YouTube transcripts, and optional local OpenAI-compatible image generation.
 
+Discord server: [Join the discussion](https://discord.gg/p222BzAtGj)
+
 The main usage is simple:
 
 - Mention the bot in a server channel

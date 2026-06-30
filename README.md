@@ -4,6 +4,8 @@
 
 一個給 Discord 用的個人向 AI 聊天 bot。支援人設、記憶、上網查資料、讀 URL、看圖片/GIF/影片附件，也可以串接本機 OpenAI-compatible 生圖服務。
 
+Discord 伺服器：[加入討論](https://discord.gg/p222BzAtGj)
+
 主要使用情境很單純：
 
 - 在伺服器用 `@mention` 叫 bot 回覆
