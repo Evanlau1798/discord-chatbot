@@ -31,6 +31,7 @@ def build_bot() -> DiscordChatBot:
     intents.message_content = os.getenv("DISCORD_MESSAGE_CONTENT_INTENT", "").strip() == "1"
     bot = DiscordChatBot(intents=intents)
     bot.load_extension("extensions.AIChat")
+    bot.load_extension("extensions.ImagineQuota")
     return bot
 
 

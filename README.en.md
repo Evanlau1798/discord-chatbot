@@ -140,6 +140,7 @@ SEARXNG_OUTGOING_PROXIES=http://proxy1:8080,socks5h://proxy2:1080
 ```
 
 To enable image generation, set `AI_IMAGINE_ENABLED=1`, `AI_IMAGINE_BASE_URL`, `AI_IMAGINE_API_KEY`, and `AI_IMAGINE_MODEL` in `.env`. When disabled, the bot does not ask the model to output `imageGeneration`.
+Image quota is disabled by default in the open-source repo. Set `AI_IMAGINE_RATE_LIMIT_ENABLED=1` to enable it. Each account then starts its own 24-hour window after a successful image generation, with 3 uses by default. Configure the limit and whitelist with `AI_IMAGINE_DAILY_LIMIT` and `AI_IMAGINE_RATE_LIMIT_WHITELIST`; set `IMAGINE_QUOTA_ADMIN_USER_ID` to the Discord user id allowed to reset all image quotas.
 
 For private personas, use an ignored filename such as `persona/my.private.json`, then set `DEFAULT_PERSONA_KEY` in `.env` to the file key without `.json`. Do not commit unlicensed scripts, transcripts, or character text to a public repo.
 
@@ -164,6 +165,8 @@ Or use the tmux startup script:
 - `/chat_history`: send DM chat history to the user
 - `/memory_view`: view long-term memory
 - `/memory_reset`: clear long-term memory
+- `/imagine_quota`: view remaining image-generation quota
+- `/imagine_quota_reset_all`: admin reset for all image-generation quotas
 
 ## Database And Runtime Files
 
@@ -178,6 +181,7 @@ You do not need to create databases manually. The program creates them when need
 
 - `databases/user_memories.db`
 - `databases/image_context_cache.db`
+- `databases/imagine_rate_limits.db`
 - `databases/AI_user_choice.pickle`
 - `AIHistory/user_history.pickle`
 

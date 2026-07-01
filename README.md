@@ -140,6 +140,7 @@ SEARXNG_OUTGOING_PROXIES=http://proxy1:8080,socks5h://proxy2:1080
 ```
 
 若要啟用生圖，請在 `.env` 設定 `AI_IMAGINE_ENABLED=1`、`AI_IMAGINE_BASE_URL`、`AI_IMAGINE_API_KEY` 與 `AI_IMAGINE_MODEL`。關閉時 bot 不會在 prompt 中要求模型輸出 `imageGeneration`。
+生圖額度限制在開源預設中關閉；若設定 `AI_IMAGINE_RATE_LIMIT_ENABLED=1`，每個帳號會在成功繪圖後開始計算 24 小時窗口，預設最多 3 次。可用 `AI_IMAGINE_DAILY_LIMIT` 與 `AI_IMAGINE_RATE_LIMIT_WHITELIST` 調整限制與白名單；`IMAGINE_QUOTA_ADMIN_USER_ID` 可指定允許重置所有繪圖額度的 Discord user id。
 
 如果你要使用自己的私有人設，可以放在 ignored 檔名，例如 `persona/my.private.json`，再把 `.env` 的 `DEFAULT_PERSONA_KEY` 設成對應檔名去掉 `.json` 後的 key。請不要把未授權作品、台本或角色文本直接提交到公開 repo。
 
@@ -158,6 +159,8 @@ python main.py
 - `/chat_history`：將 DM 對話歷史私訊給使用者
 - `/memory_view`：查看長期記憶
 - `/memory_reset`：清除長期記憶
+- `/imagine_quota`：查看剩餘繪圖額度
+- `/imagine_quota_reset_all`：管理員重置所有繪圖額度
 
 ## 資料庫與 runtime 檔案
 
@@ -172,6 +175,7 @@ python main.py
 
 - `databases/user_memories.db`
 - `databases/image_context_cache.db`
+- `databases/imagine_rate_limits.db`
 - `databases/AI_user_choice.pickle`
 - `AIHistory/user_history.pickle`
 

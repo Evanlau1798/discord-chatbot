@@ -25,9 +25,11 @@ from utils.discord_status_notice import delete_notice, edit_notice, format_queue
 from utils.gemini_api import DEFAULT_GEMINI_MODEL, GeminiChatClient, _is_retryable_api_error
 from utils.image_context_cache import ImageContextCache
 from utils.imagine_config import get_imagine_base_url, is_image_generation_enabled
+from utils.imagine_rate_limit_store import ImagineRateLimiter, format_imagine_rate_limit_notice
 from utils.json_response_protocol import build_fallback_response, build_repair_instruction, parse_model_response
 from utils.memory_store import MemoryStore
 from utils.persona_image_prompt import PersonaImagePromptStore, merge_persona_image_prompt
+from utils.persona_select_view import PersonaSelectView
 from utils.persona_store import PersonaPromptBuilder, PersonaStore, format_persona_list
 from utils.web_tool_client import HeadlessBrowserClient
 
@@ -35,47 +37,6 @@ logger = logging.getLogger("discord.extensions.AIChat")
 USER_CHAT_LOCKS = defaultdict(asyncio.Lock)
 GENAI_RETRY_DELAYS = (1, 5, 5, 10, 30)
 LOADING_EMOJI = "<a:loading:1303077872805744650>"
-
-
-class PersonaSelect(discord.ui.Select):
-    def __init__(self, cog: "AiChat", user_id: int):
-        self.cog = cog
-        self.user_id = user_id
-        options = []
-        for persona in cog.persona_store.list_personas()[:24]:
-            options.append(
-                discord.SelectOption(
-                    label=persona.name[:100],
-                    value=persona.key[:100],
-                    description=f"檔名: {persona.key}"[:100],
-                )
-            )
-        super().__init__(
-            placeholder="選擇要切換的人設",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("這個選單不是給你使用的。", ephemeral=True)
-            return
-        selected = self.values[0]
-        self.cog.user_settings.modify(user=interaction.user, persona=selected)
-        await interaction.response.edit_message(
-            embed=SakuraEmbedMsg(
-                title="人設已切換",
-                description=self.cog._format_current_settings(interaction.user),
-            ),
-            view=self.view,
-        )
-
-
-class PersonaSelectView(discord.ui.View):
-    def __init__(self, cog: "AiChat", user_id: int):
-        super().__init__(timeout=180)
-        self.add_item(PersonaSelect(cog, user_id))
 
 
 class AiChat(AiChatContextMixin, commands.Cog):
@@ -89,6 +50,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
         self.memory_store = MemoryStore()
         self.image_context_cache = ImageContextCache()
         self.image_context_cache.cleanup_expired()
+        self.imagine_rate_limiter = ImagineRateLimiter()
         self.browser_client = HeadlessBrowserClient()
         self.request_limiter = AiChatRequestLimiter()
         logger.info("ai_chat.request_limiter_configured max_parallel_requests=%s", self.request_limiter.max_parallel_requests)
@@ -200,16 +162,28 @@ class AiChat(AiChatContextMixin, commands.Cog):
                     cached_content,
                 )
             image_status_message = None
+            image_rate_limited_until = None
+            image_quota_status = None
             if parsed.image_generation is not None and self.image_generation_enabled:
+                image_quota_status = self.imagine_rate_limiter.check(message.author.id)
+                if not image_quota_status.allowed:
+                    image_rate_limited_until = image_quota_status.reset_at
+            if parsed.image_generation is not None and self.image_generation_enabled and image_rate_limited_until is None:
                 image_status_message = await self._upsert_image_status(message, browser_notice, parsed.reply_text)
                 if image_status_message is not None:
                     browser_notice = image_status_message
-            image_paths, image_error = await self._maybe_generate_image(parsed, persona)
+                image_paths, image_error = await self._maybe_generate_image(parsed, persona)
+                if image_paths and not image_error and image_quota_status is not None:
+                    self.imagine_rate_limiter.record_success(message.author.id)
+            else:
+                image_paths, image_error = [], False
             if parsed.memory is not None:
                 self.memory_store.set_memory(message.author.id, parsed.memory.content)
             reply_text = parsed.reply_text
             if image_error:
                 reply_text = f"{reply_text}\n\n圖片生成服務暫時不可用，文字回覆先送出。"
+            if image_rate_limited_until is not None:
+                reply_text = f"{reply_text}\n\n{format_imagine_rate_limit_notice(image_rate_limited_until)}"
             image_context = self._store_image_understanding_context(message, dialogue, parsed)
             if is_dm:
                 self._append_history(
