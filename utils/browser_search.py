@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+from utils.async_cooldown_queue import AsyncCooldownQueue
 from utils.browser_actions import normalize_search_queries
 from utils.browser_result_types import BrowserFetchResult
 from utils.search_provider_api import (
@@ -24,11 +25,13 @@ DEFAULT_SEARXNG_QUERY_COOLDOWN_SECONDS = 1.0
 MAX_MERGED_QUERY_TERMS = 5
 MAX_MERGED_QUERY_CHARS = 500
 MERGED_QUERY_SEPARATOR = ", "
+SEARXNG_REQUEST_QUEUE = AsyncCooldownQueue()
 
 
 class SearchPlanner:
-    def __init__(self, timeout_ms: int):
+    def __init__(self, timeout_ms: int, *, request_queue: AsyncCooldownQueue | None = None):
         self.timeout_ms = timeout_ms
+        self.request_queue = request_queue or SEARXNG_REQUEST_QUEUE
         self.searxng_base_url = os.getenv(SEARXNG_BASE_URL_ENV, DEFAULT_SEARXNG_BASE_URL).strip()
         self.searxng_base_url = self.searxng_base_url or DEFAULT_SEARXNG_BASE_URL
         self.searxng_categories = os.getenv(SEARXNG_CATEGORIES_ENV, "").strip()
@@ -65,18 +68,19 @@ class SearchPlanner:
 
     async def _fetch_searxng_searches(self, queries: list[str]) -> list[BrowserFetchResult]:
         results = []
-        for index, query in enumerate(queries):
-            if index > 0 and self.query_cooldown_seconds > 0:
-                await asyncio.sleep(self.query_cooldown_seconds)
-            result = await asyncio.to_thread(
-                fetch_searxng_search_result,
-                query,
-                self.searxng_base_url,
-                self.timeout_ms,
-                categories=self.searxng_categories_for_query(query),
-                engines=self.searxng_engines,
-                language=self.searxng_language,
-                time_range=self.searxng_time_range,
+        for query in queries:
+            result = await self.request_queue.run(
+                lambda query=query: asyncio.to_thread(
+                    fetch_searxng_search_result,
+                    query,
+                    self.searxng_base_url,
+                    self.timeout_ms,
+                    categories=self.searxng_categories_for_query(query),
+                    engines=self.searxng_engines,
+                    language=self.searxng_language,
+                    time_range=self.searxng_time_range,
+                ),
+                cooldown_seconds=self.query_cooldown_seconds,
             )
             if result.text or result.error:
                 results.append(result)

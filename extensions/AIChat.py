@@ -13,6 +13,7 @@ from google.genai import errors as genai_errors
 
 from utils.EmbedMessage import SakuraEmbedMsg
 from utils.ai_chat_browser import fetch_browser_results, format_browser_notice_targets
+from utils.ai_chat_concurrency import AiChatRequestLimiter
 from utils.ai_chat_settings import AiChatUserSettingsStore
 from utils.ai_chat_context import AiChatContextMixin, MAX_CHAT_TURNS
 from utils.ai_imagine_client import ImagineAPIError, ImagineClient
@@ -88,6 +89,8 @@ class AiChat(AiChatContextMixin, commands.Cog):
         self.image_context_cache = ImageContextCache()
         self.image_context_cache.cleanup_expired()
         self.browser_client = HeadlessBrowserClient()
+        self.request_limiter = AiChatRequestLimiter()
+        logger.info("ai_chat.request_limiter_configured max_parallel_requests=%s", self.request_limiter.max_parallel_requests)
         self.image_generation_enabled = is_image_generation_enabled()
         self.gemini_client = GeminiChatClient(
             api_key=os.getenv("GEMINIAPIKEY") or os.getenv("GEMINI_API_KEY"),
@@ -108,38 +111,39 @@ class AiChat(AiChatContextMixin, commands.Cog):
         if not text and not message.attachments and not getattr(message, "embeds", []):
             return
         async with keep_typing(message.channel):
-            try:
-                result = await self.chat(message=message, dialogue=text, is_dm=is_dm)
-                if result.get("delivered_message") is not None:
+            async with self.request_limiter:
+                try:
+                    result = await self.chat(message=message, dialogue=text, is_dm=is_dm)
+                    if result.get("delivered_message") is not None:
+                        if result["image_paths"]:
+                            image_sender = (
+                                (lambda content, files: message.channel.send(content=content or None, files=files))
+                                if is_dm and result.get("browser_used")
+                                else (lambda content, files: result["delivered_message"].reply(content=content or None, files=files, mention_author=False))
+                            )
+                            await send_content_with_files(
+                                image_sender,
+                                "",
+                                result["image_paths"],
+                            )
+                        return
                     if result["image_paths"]:
-                        image_sender = (
-                            (lambda content, files: message.channel.send(content=content or None, files=files))
-                            if is_dm and result.get("browser_used")
-                            else (lambda content, files: result["delivered_message"].reply(content=content or None, files=files, mention_author=False))
-                        )
                         await send_content_with_files(
-                            image_sender,
-                            "",
+                            lambda content, files: message.reply(content=content, files=files, mention_author=False),
+                            result["reply_text"],
                             result["image_paths"],
                         )
-                    return
-                if result["image_paths"]:
-                    await send_content_with_files(
-                        lambda content, files: message.reply(content=content, files=files, mention_author=False),
-                        result["reply_text"],
-                        result["image_paths"],
+                        return
+                    await message.reply(content=result["reply_text"], mention_author=False)
+                except Exception as exc:
+                    logger.exception("ai_chat.message_failed")
+                    await message.reply(
+                        embed=SakuraEmbedMsg(
+                            title="訊息無法傳送",
+                            description=_user_error_message(exc),
+                        ),
+                        mention_author=False,
                     )
-                    return
-                await message.reply(content=result["reply_text"], mention_author=False)
-            except Exception as exc:
-                logger.exception("ai_chat.message_failed")
-                await message.reply(
-                    embed=SakuraEmbedMsg(
-                        title="訊息無法傳送",
-                        description=_user_error_message(exc),
-                    ),
-                    mention_author=False,
-                )
 
     async def chat(self, *, message: discord.Message, dialogue: str, is_dm: bool) -> dict:
         async with USER_CHAT_LOCKS[message.author.id]:

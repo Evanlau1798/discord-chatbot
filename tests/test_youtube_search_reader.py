@@ -30,6 +30,14 @@ class YoutubeSearchReaderTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(youtube_query_cooldown_seconds_from_env(), 1.0)
 
+    def test_ytdlp_request_cooldown_env_takes_precedence(self):
+        env = {
+            "YTDLP_REQUEST_COOLDOWN_SECONDS": "2.5",
+            "YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS": "1",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(youtube_query_cooldown_seconds_from_env(), 2.5)
+
     def test_search_youtube_videos_formats_flat_playlist_results(self):
         payload = {
             "entries": [

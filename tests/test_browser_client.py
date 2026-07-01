@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
+from utils.async_cooldown_queue import AsyncCooldownQueue
 from utils.browser_client import (
     ANTI_BOT_ERROR,
     BrowserFetchResult,
@@ -100,6 +104,11 @@ class BrowserClientContentTests(unittest.TestCase):
 
 
 class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from utils.browser_search import SEARXNG_REQUEST_QUEUE
+
+        SEARXNG_REQUEST_QUEUE.reset()
+
     def test_format_searxng_results(self):
         payload = {
             "results": [
@@ -167,11 +176,10 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
             "apex hal 吃麥克風 youtube",
             "apex hal 爆音 youtube",
         ]
+        request_queue = _RecordingCooldownQueue()
         with patch.dict(os.environ, {}, clear=True):
-            search_planner = SearchPlanner(timeout_ms=1000)
-            with patch("utils.browser_search.asyncio.sleep") as sleep, patch(
-                "utils.browser_search.fetch_searxng_search_result"
-            ) as fetch_searxng:
+            search_planner = SearchPlanner(timeout_ms=1000, request_queue=request_queue)
+            with patch("utils.browser_search.fetch_searxng_search_result") as fetch_searxng:
                 fetch_searxng.side_effect = [
                     BrowserFetchResult(requested_url="q1", source_type="search", query="q1", text="first"),
                     BrowserFetchResult(requested_url="q2", source_type="search", query="q2", text="second"),
@@ -189,7 +197,7 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
             "hal apex mic clipping youtube",
             "hal apex mic distortion youtube",
         ])
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 1.0])
+        self.assertEqual(request_queue.cooldowns, [1.0, 1.0, 1.0])
 
     async def test_search_queries_can_be_merged_when_enabled(self):
         queries = [
@@ -222,11 +230,10 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
             "SEARXNG_MAX_QUERIES_PER_TURN": "2",
             "SEARXNG_QUERY_COOLDOWN_SECONDS": "1",
         }
+        request_queue = _RecordingCooldownQueue()
         with patch.dict(os.environ, env, clear=True):
-            search_planner = SearchPlanner(timeout_ms=1000)
-            with patch("utils.browser_search.asyncio.sleep") as sleep, patch(
-                "utils.browser_search.fetch_searxng_search_result"
-            ) as fetch_searxng:
+            search_planner = SearchPlanner(timeout_ms=1000, request_queue=request_queue)
+            with patch("utils.browser_search.fetch_searxng_search_result") as fetch_searxng:
                 fetch_searxng.side_effect = [
                     BrowserFetchResult(requested_url="q1", source_type="search", query="q1", text="first"),
                     BrowserFetchResult(requested_url="q2", source_type="search", query="q2", text="second"),
@@ -236,7 +243,36 @@ class SearxngSearchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(search_results), 2)
         self.assertEqual([call.args[0] for call in fetch_searxng.call_args_list], ["q1", "q2"])
-        sleep.assert_called_once_with(1.0)
+        self.assertEqual(request_queue.cooldowns, [1.0, 1.0])
+
+    async def test_concurrent_searches_share_single_worker_queue(self):
+        queue = AsyncCooldownQueue()
+        active = 0
+        max_seen = 0
+        lock = threading.Lock()
+
+        def fetch_search(query, *args, **kwargs):
+            nonlocal active, max_seen
+            with lock:
+                active += 1
+                max_seen = max(max_seen, active)
+            time.sleep(0.02)
+            with lock:
+                active -= 1
+            return BrowserFetchResult(
+                requested_url=query,
+                source_type="search",
+                query=query,
+                text=f"Result for {query}",
+            )
+
+        env = {"SEARXNG_QUERY_COOLDOWN_SECONDS": "0"}
+        with patch.dict(os.environ, env, clear=True), patch("utils.browser_search.fetch_searxng_search_result", fetch_search):
+            planners = [SearchPlanner(timeout_ms=1000, request_queue=queue) for _ in range(3)]
+            results = await asyncio.gather(*(planner.search_many([f"query-{index}"]) for index, planner in enumerate(planners)))
+
+        self.assertEqual(max_seen, 1)
+        self.assertEqual([result[0].query for result in results], ["query-0", "query-1", "query-2"])
 
     def test_browser_notice_displays_first_three_search_queries_by_default(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -410,6 +446,18 @@ class PatchrightBrowserClientConfigTests(unittest.TestCase):
             client = PatchrightBrowserClient()
 
         self.assertEqual(client._launch_options(), {"headless": False, "channel": "chrome"})
+
+
+class _RecordingCooldownQueue:
+    def __init__(self):
+        self.cooldowns = []
+
+    async def run(self, operation, *, cooldown_seconds: float):
+        self.cooldowns.append(cooldown_seconds)
+        value = operation()
+        if asyncio.iscoroutine(value):
+            return await value
+        return value
 
 
 if __name__ == "__main__":

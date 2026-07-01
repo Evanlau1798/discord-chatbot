@@ -31,6 +31,7 @@ Discord 伺服器：[加入討論](https://discord.gg/p222BzAtGj)
   - DM 會保存短期聊天歷史
   - 伺服器對話以「回覆鏈」作為上下文，不讀整個頻道歷史
   - 可從快取還原過去圖片訊息的文字摘要
+  - 預設最多同時處理 3 則 Discord 訊息請求，可用 `.env` 調整
 
 - **上網搜尋與讀網頁**
   - 搜尋一律走 SearXNG，預設同時使用 Google 與 Bing
@@ -107,6 +108,12 @@ PY
 
 更多可用參數請看 [.env.example](.env.example)。
 
+Discord 訊息處理預設同時執行 3 則請求；這是 async 併發數，不是 OS thread 數：
+
+```env
+AI_CHAT_MAX_PARALLEL_REQUESTS=3
+```
+
 搜尋相關設定預設如下，可依需要調整：
 
 ```env
@@ -116,6 +123,7 @@ SEARXNG_MAX_QUERIES_PER_TURN=3
 SEARXNG_QUERY_COOLDOWN_SECONDS=1
 SEARXNG_OUTGOING_PROXIES=
 SEARXNG_EXTRA_PROXY_TIMEOUT=10
+YTDLP_REQUEST_COOLDOWN_SECONDS=1
 YOUTUBE_SEARCH_LIMIT=5
 YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN=1
 YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
@@ -123,7 +131,7 @@ YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
 
 預設不合併 query，而是依序執行模型輸出的前 3 個搜尋關鍵字，每次間隔 1 秒；若要合併多個 query，可把 `SEARXNG_MERGE_QUERIES` 設為 `1`。
-YouTube 影片搜尋預設每輪只執行 1 個 query，並讓 `yt-dlp` request 間隔 1 秒；通常讓模型產生一個精準 query，再取前 5 個 YouTube 結果就夠用。
+SearXNG 與 `yt-dlp` 會各自使用單工 queue；YouTube 影片搜尋預設每輪只執行 1 個 query，並讓 `yt-dlp` request 間隔 1 秒。通常讓模型產生一個精準 query，再取前 5 個 YouTube 結果就夠用。
 
 如果 Google 仍頻繁出現 CAPTCHA，可以在 `.env` 設定 `SEARXNG_OUTGOING_PROXIES`，多個 proxy 用逗號或換行分隔。`./start_searxng.sh` 會把它生成到 SearXNG `settings.yml` 的 `outgoing.proxies`。SearXNG 支援同協定多個 proxy 並以 round-robin 分配請求；使用 proxy 時，真正對搜尋引擎顯示的出口 IP 會由 proxy 端決定。
 

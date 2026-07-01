@@ -7,16 +7,15 @@ from collections.abc import Callable
 from typing import Any
 
 from utils.browser_result_types import BrowserFetchResult
+from utils.ytdlp_request_queue import ytdlp_request_cooldown_seconds_from_env
 
 YT_DLP_BIN_ENV = "YT_DLP_BIN"
 YOUTUBE_SEARCH_LIMIT_ENV = "YOUTUBE_SEARCH_LIMIT"
 YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN_ENV = "YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN"
-YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS_ENV = "YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS"
 YTDLP_SEARCH_SLEEP_REQUESTS_ENV = "YTDLP_SEARCH_SLEEP_REQUESTS"
 DEFAULT_YT_DLP_BIN = "yt-dlp"
 DEFAULT_YOUTUBE_SEARCH_LIMIT = 5
 DEFAULT_YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN = 1
-DEFAULT_YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS = 1.0
 MAX_YOUTUBE_SEARCH_LIMIT = 10
 DEFAULT_YTDLP_SEARCH_SLEEP_REQUESTS = 1.0
 MAX_DESCRIPTION_CHARS = 220
@@ -36,12 +35,7 @@ def plan_youtube_search_queries_from_env(queries: list[str]) -> list[str]:
 
 
 def youtube_query_cooldown_seconds_from_env() -> float:
-    return _bounded_float_from_env(
-        YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS_ENV,
-        default=DEFAULT_YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS,
-        minimum=0.0,
-        maximum=30.0,
-    )
+    return ytdlp_request_cooldown_seconds_from_env()
 
 
 def search_youtube_videos(
@@ -136,14 +130,6 @@ def _int_from_env(name: str, default: int) -> int:
 
 def _bounded_int_from_env(name: str, *, default: int, minimum: int, maximum: int) -> int:
     return min(max(_int_from_env(name, default), minimum), maximum)
-
-
-def _bounded_float_from_env(name: str, *, default: float, minimum: float, maximum: float) -> float:
-    try:
-        value = float(os.getenv(name, str(default)).strip())
-    except ValueError:
-        return default
-    return min(max(value, minimum), maximum)
 
 
 def _dedupe_texts(values: list[str]) -> list[str]:

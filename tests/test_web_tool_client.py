@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +39,20 @@ class FakeSearchPlanner:
         return self.search_results
 
 
+class FakeCooldownQueue:
+    def __init__(self):
+        self.cooldowns = []
+        self.calls = 0
+
+    async def run(self, operation, *, cooldown_seconds: float):
+        self.calls += 1
+        self.cooldowns.append(cooldown_seconds)
+        value = operation()
+        if asyncio.iscoroutine(value):
+            return await value
+        return value
+
+
 class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_url_open_uses_http_first_without_browser(self):
         browser_client = FakeBrowserClient()
@@ -64,6 +79,7 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_url_open_uses_special_reader_before_http(self):
         browser_client = FakeBrowserClient()
+        ytdlp_queue = FakeCooldownQueue()
         special_result = BrowserFetchResult(
             requested_url="https://youtu.be/abc123xyz00",
             source_type="url",
@@ -76,12 +92,18 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
         def http_fetcher(url: str, timeout_ms: int) -> HttpPageText:
             raise AssertionError("special URL reader should run before generic HTTP")
 
-        client = WebToolClient(timeout_ms=1000, browser_client=browser_client, http_fetcher=http_fetcher)
+        client = WebToolClient(
+            timeout_ms=1000,
+            browser_client=browser_client,
+            http_fetcher=http_fetcher,
+            ytdlp_queue=ytdlp_queue,
+        )
 
         with patch("utils.web_tool_client.read_special_url", return_value=special_result):
             results = await client.fetch_urls_and_searches(["https://youtu.be/abc123xyz00"], [])
 
         self.assertEqual(results, [special_result])
+        self.assertEqual(ytdlp_queue.cooldowns, [1.0])
         self.assertIsNone(browser_client.fetched_targets)
 
     async def test_url_open_falls_back_to_browser_when_http_fails(self):
@@ -178,6 +200,7 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
             browser_client=browser_client,
             search_planner=search_planner,
             youtube_searcher=youtube_searcher,
+            ytdlp_queue=FakeCooldownQueue(),
         )
 
         results = await client.fetch_urls_and_searches([], [], youtube_search_queries=["Apex Hal eating microphone"])
@@ -191,6 +214,7 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
         browser_client = FakeBrowserClient()
         search_planner = FakeSearchPlanner()
         received_queries = []
+        ytdlp_queue = FakeCooldownQueue()
 
         def youtube_searcher(query: str, timeout_ms: int) -> BrowserFetchResult:
             received_queries.append(query)
@@ -206,12 +230,13 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
             browser_client=browser_client,
             search_planner=search_planner,
             youtube_searcher=youtube_searcher,
+            ytdlp_queue=ytdlp_queue,
         )
         env = {
             "YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN": "2",
             "YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS": "1",
         }
-        with patch.dict("os.environ", env, clear=True), patch("utils.web_tool_client.asyncio.sleep") as sleep:
+        with patch.dict("os.environ", env, clear=True):
             results = await client.fetch_urls_and_searches(
                 [],
                 [],
@@ -220,7 +245,7 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([result.query for result in results], ["first", "second"])
         self.assertEqual(received_queries, ["first", "second"])
-        sleep.assert_called_once_with(1.0)
+        self.assertEqual(ytdlp_queue.cooldowns, [1.0, 1.0])
         self.assertEqual(search_planner.received_queries, [])
 
     async def test_search_result_does_not_force_browser_fetch(self):

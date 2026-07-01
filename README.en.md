@@ -31,6 +31,7 @@ The main usage is simple:
   - DM keeps short-term chat history
   - Server context follows reply chains instead of reading the whole channel
   - Cached image summaries can be restored into future context
+  - Handles up to 3 Discord message requests concurrently by default, configurable in `.env`
 
 - **Web search and page reading**
   - Search always goes through SearXNG, with Google and Bing enabled by default
@@ -107,6 +108,12 @@ PY
 
 See [.env.example](.env.example) for all available variables.
 
+Discord message handling runs 3 requests concurrently by default. This is async concurrency, not OS thread count:
+
+```env
+AI_CHAT_MAX_PARALLEL_REQUESTS=3
+```
+
 Default search-related settings:
 
 ```env
@@ -116,6 +123,7 @@ SEARXNG_MAX_QUERIES_PER_TURN=3
 SEARXNG_QUERY_COOLDOWN_SECONDS=1
 SEARXNG_OUTGOING_PROXIES=
 SEARXNG_EXTRA_PROXY_TIMEOUT=10
+YTDLP_REQUEST_COOLDOWN_SECONDS=1
 YOUTUBE_SEARCH_LIMIT=5
 YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN=1
 YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
@@ -123,7 +131,7 @@ YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
 
 By default, queries are not merged. The bot executes up to the first 3 model-provided search queries with a 1-second delay between each search. Set `SEARXNG_MERGE_QUERIES=1` only when you explicitly want multiple queries merged.
-YouTube video search runs only 1 query per turn by default, with a 1-second `yt-dlp` request sleep. In practice, one precise query with the top 5 YouTube results is usually enough.
+SearXNG and `yt-dlp` each use a single-worker queue. YouTube video search runs only 1 query per turn by default, with a 1-second delay between `yt-dlp` requests. In practice, one precise query with the top 5 YouTube results is usually enough.
 
 If Google still hits CAPTCHA frequently, set `SEARXNG_OUTGOING_PROXIES` in `.env`. Separate multiple proxies with commas or newlines. `./start_searxng.sh` generates SearXNG `settings.yml` with `outgoing.proxies`. SearXNG supports multiple proxies for the same protocol and distributes requests round-robin; when proxies are used, search engines see the proxy-side outbound IP.
 

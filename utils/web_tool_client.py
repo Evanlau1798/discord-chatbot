@@ -17,8 +17,9 @@ from utils.url_readers import read_special_url
 from utils.youtube_search_reader import (
     plan_youtube_search_queries_from_env,
     search_youtube_videos,
-    youtube_query_cooldown_seconds_from_env,
 )
+from utils.youtube_transcript_reader import parse_youtube_video_id
+from utils.ytdlp_request_queue import YTDLP_REQUEST_QUEUE, ytdlp_request_cooldown_seconds_from_env
 
 Target = BrowserTarget
 HttpFetcher = Callable[[str, int], HttpPageText]
@@ -35,12 +36,14 @@ class WebToolClient:
         search_planner: SearchPlanner | None = None,
         http_fetcher: HttpFetcher = fetch_http_page_text,
         youtube_searcher: YoutubeSearcher = search_youtube_videos,
+        ytdlp_queue=None,
     ):
         self.timeout_ms = timeout_ms
         self.browser_client = browser_client or PatchrightBrowserClient(timeout_ms)
         self.search_planner = search_planner or SearchPlanner(timeout_ms)
         self.http_fetcher = http_fetcher
         self.youtube_searcher = youtube_searcher
+        self.ytdlp_queue = ytdlp_queue or YTDLP_REQUEST_QUEUE
 
     async def fetch_many(self, urls: list[str]) -> list[BrowserFetchResult]:
         return await self.fetch_urls_and_searches(urls, [])
@@ -72,11 +75,12 @@ class WebToolClient:
     async def _fetch_youtube_searches(self, queries: list[str]) -> list[BrowserFetchResult]:
         results = []
         planned_queries = plan_youtube_search_queries_from_env(queries)
-        cooldown_seconds = youtube_query_cooldown_seconds_from_env()
-        for index, query in enumerate(planned_queries):
-            if index > 0 and cooldown_seconds > 0:
-                await asyncio.sleep(cooldown_seconds)
-            result = await asyncio.to_thread(self.youtube_searcher, query, self.timeout_ms)
+        cooldown_seconds = ytdlp_request_cooldown_seconds_from_env()
+        for query in planned_queries:
+            result = await self.ytdlp_queue.run(
+                lambda query=query: asyncio.to_thread(self.youtube_searcher, query, self.timeout_ms),
+                cooldown_seconds=cooldown_seconds,
+            )
             results.append(result)
         return results
 
@@ -99,7 +103,14 @@ class WebToolClient:
         return http_results, browser_targets
 
     async def _fetch_special_target(self, target: Target, include_images: bool = False) -> BrowserFetchResult | None:
-        result = await asyncio.to_thread(read_special_url, target["url"], self.timeout_ms, include_images=include_images)
+        operation = lambda: asyncio.to_thread(read_special_url, target["url"], self.timeout_ms, include_images=include_images)
+        if parse_youtube_video_id(target["url"]):
+            result = await self.ytdlp_queue.run(
+                operation,
+                cooldown_seconds=ytdlp_request_cooldown_seconds_from_env(),
+            )
+        else:
+            result = await operation()
         return result
 
     async def _fetch_http_target(self, target: Target, include_images: bool = False) -> BrowserFetchResult:
