@@ -21,6 +21,7 @@ from utils.browser_result_payload import build_browser_followup_content
 from utils.discord_notice_timing import MIN_BROWSER_NOTICE_DISPLAY_SECONDS, wait_for_min_notice_display
 from utils.discord_files import send_content_with_files
 from utils.discord_presence import keep_typing
+from utils.discord_status_notice import delete_notice, edit_notice, format_queue_notice_content, upsert_reply_notice
 from utils.gemini_api import DEFAULT_GEMINI_MODEL, GeminiChatClient, _is_retryable_api_error
 from utils.image_context_cache import ImageContextCache
 from utils.imagine_config import get_imagine_base_url, is_image_generation_enabled
@@ -110,11 +111,23 @@ class AiChat(AiChatContextMixin, commands.Cog):
         text = self._extract_dialogue_text(message, is_dm=is_dm)
         if not text and not message.attachments and not getattr(message, "embeds", []):
             return
+        queue_notice = None
+
+        async def on_queue_update(update):
+            nonlocal queue_notice
+            queue_notice = await upsert_reply_notice(
+                message,
+                queue_notice,
+                format_queue_notice_content(update, LOADING_EMOJI),
+                logger,
+            )
+
         async with keep_typing(message.channel):
-            async with self.request_limiter:
+            async with self.request_limiter.with_queue_updates(on_queue_update):
                 try:
                     result = await self.chat(message=message, dialogue=text, is_dm=is_dm)
                     if result.get("delivered_message") is not None:
+                        await delete_notice(queue_notice, logger)
                         if result["image_paths"]:
                             image_sender = (
                                 (lambda content, files: message.channel.send(content=content or None, files=files))
@@ -133,10 +146,14 @@ class AiChat(AiChatContextMixin, commands.Cog):
                             result["reply_text"],
                             result["image_paths"],
                         )
+                        await delete_notice(queue_notice, logger)
+                        return
+                    if await edit_notice(queue_notice, result["reply_text"], logger):
                         return
                     await message.reply(content=result["reply_text"], mention_author=False)
                 except Exception as exc:
                     logger.exception("ai_chat.message_failed")
+                    await delete_notice(queue_notice, logger)
                     await message.reply(
                         embed=SakuraEmbedMsg(
                             title="訊息無法傳送",
