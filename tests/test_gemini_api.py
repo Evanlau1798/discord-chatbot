@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import unittest
 from unittest.mock import patch
 
@@ -45,8 +46,8 @@ class GeminiApiTests(unittest.TestCase):
         ]
         sampling = GifFrameSamplingResult(
             frames=(
-                GifFrameSample(data=b"frame-1", mime_type="image/png", frame_index=0, time_ms=0),
-                GifFrameSample(data=b"frame-2", mime_type="image/png", frame_index=4, time_ms=320),
+                GifFrameSample(data=_jpeg_bytes("red"), mime_type="image/jpeg", frame_index=0, time_ms=0),
+                GifFrameSample(data=_jpeg_bytes("blue"), mime_type="image/jpeg", frame_index=4, time_ms=320),
             ),
             frame_count=5,
             duration_ms=400,
@@ -61,8 +62,10 @@ class GeminiApiTests(unittest.TestCase):
 
         self.assertEqual(parts[0], ("text", "describe this"))
         self.assertIn("sampled image frames", parts[1][1])
-        self.assertEqual(parts[2], ("bytes", b"frame-1", "image/png"))
-        self.assertEqual(parts[3], ("bytes", b"frame-2", "image/png"))
+        self.assertIn("contact sheet", parts[1][1])
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[2][0], "bytes")
+        self.assertEqual(parts[2][2], "image/jpeg")
 
     def test_convert_parts_expands_inline_apng_bytes_to_sampled_frames(self):
         client = GeminiChatClient.__new__(GeminiChatClient)
@@ -72,8 +75,8 @@ class GeminiApiTests(unittest.TestCase):
         ]
         sampling = GifFrameSamplingResult(
             frames=(
-                GifFrameSample(data=b"frame-1", mime_type="image/jpeg", frame_index=0, time_ms=0),
-                GifFrameSample(data=b"frame-2", mime_type="image/jpeg", frame_index=1, time_ms=100),
+                GifFrameSample(data=_jpeg_bytes("red"), mime_type="image/jpeg", frame_index=0, time_ms=0),
+                GifFrameSample(data=_jpeg_bytes("blue"), mime_type="image/jpeg", frame_index=1, time_ms=100),
             ),
             frame_count=2,
             duration_ms=200,
@@ -88,8 +91,10 @@ class GeminiApiTests(unittest.TestCase):
 
         self.assertEqual(parts[0], ("text", "describe this"))
         self.assertIn("APNG", parts[1][1])
-        self.assertEqual(parts[2], ("bytes", b"frame-1", "image/jpeg"))
-        self.assertEqual(parts[3], ("bytes", b"frame-2", "image/jpeg"))
+        self.assertIn("contact sheet", parts[1][1])
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[2][0], "bytes")
+        self.assertEqual(parts[2][2], "image/jpeg")
 
     def test_convert_parts_expands_inline_webp_bytes_to_sampled_frames(self):
         client = GeminiChatClient.__new__(GeminiChatClient)
@@ -99,8 +104,8 @@ class GeminiApiTests(unittest.TestCase):
         ]
         sampling = GifFrameSamplingResult(
             frames=(
-                GifFrameSample(data=b"frame-1", mime_type="image/jpeg", frame_index=0, time_ms=0),
-                GifFrameSample(data=b"frame-2", mime_type="image/jpeg", frame_index=1, time_ms=100),
+                GifFrameSample(data=_jpeg_bytes("red"), mime_type="image/jpeg", frame_index=0, time_ms=0),
+                GifFrameSample(data=_jpeg_bytes("blue"), mime_type="image/jpeg", frame_index=1, time_ms=100),
             ),
             frame_count=2,
             duration_ms=200,
@@ -115,8 +120,10 @@ class GeminiApiTests(unittest.TestCase):
 
         self.assertEqual(parts[0], ("text", "describe this"))
         self.assertIn("WebP", parts[1][1])
-        self.assertEqual(parts[2], ("bytes", b"frame-1", "image/jpeg"))
-        self.assertEqual(parts[3], ("bytes", b"frame-2", "image/jpeg"))
+        self.assertIn("contact sheet", parts[1][1])
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[2][0], "bytes")
+        self.assertEqual(parts[2][2], "image/jpeg")
 
     def test_estimate_content_chars_ignores_inline_image_bytes(self):
         content = [
@@ -146,8 +153,8 @@ class GeminiApiTests(unittest.TestCase):
         ]
         split_result = MediaSplitResult(
             frames=(
-                MediaFrame(data=b"frame-1", mime_type="image/jpeg", frame_index=0, time_ms=0),
-                MediaFrame(data=b"frame-2", mime_type="image/jpeg", frame_index=30, time_ms=1000),
+                MediaFrame(data=_jpeg_bytes("red"), mime_type="image/jpeg", frame_index=0, time_ms=0),
+                MediaFrame(data=_jpeg_bytes("blue"), mime_type="image/jpeg", frame_index=30, time_ms=1000),
             ),
             frame_count=60,
             duration_ms=2000,
@@ -162,10 +169,11 @@ class GeminiApiTests(unittest.TestCase):
             parts = client._convert_parts(content)
 
         self.assertEqual(parts[0], ("text", "describe this"))
-        self.assertIn("sampled JPEG frames", parts[1][1])
+        self.assertIn("contact sheet", parts[1][1])
         self.assertIn("filename=clip.mp4", parts[1][1])
-        self.assertEqual(parts[2], ("bytes", b"frame-1", "image/jpeg"))
-        self.assertEqual(parts[3], ("bytes", b"frame-2", "image/jpeg"))
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[2][0], "bytes")
+        self.assertEqual(parts[2][2], "image/jpeg")
 
     def test_explicit_cache_auto_skips_gemma_models(self):
         with patch.dict("os.environ", {}, clear=True):
@@ -191,6 +199,21 @@ class GeminiApiTests(unittest.TestCase):
             cache_names = client.refresh_persona_caches({"akira": "prompt"})
 
         self.assertEqual(cache_names, {})
+
+
+def _jpeg_bytes(color: str) -> bytes:
+    Image = _load_pillow_image()
+    buffer = io.BytesIO()
+    Image.new("RGB", (24, 24), color).save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue()
+
+
+def _load_pillow_image():
+    try:
+        from PIL import Image
+    except ImportError:
+        raise unittest.SkipTest("Pillow is not installed")
+    return Image
 
 
 if __name__ == "__main__":

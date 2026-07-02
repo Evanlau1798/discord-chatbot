@@ -28,6 +28,7 @@ from utils.gif_frame_sampler import (
     sample_gif_frames,
     sample_webp_frames,
 )
+from utils.media_frame_presentation import present_media_frames
 from utils.video_frame_splitter import split_video_bytes
 
 DEFAULT_GEMINI_MODEL = "gemma-4-31b-it"
@@ -295,6 +296,9 @@ def _video_bytes_parts(payload) -> list:
     if split_result is None:
         logger.warning("gemini.video_sampling_failed source=%s", _safe_source_label(filename or mime_type))
         return []
+    presented_parts = _contact_sheet_parts(split_result.frames, _video_sampling_note(split_result, filename))
+    if presented_parts:
+        return presented_parts
     return [
         genai_types.Part.from_text(text=_video_sampling_note(split_result, filename)),
         *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in split_result.frames),
@@ -317,6 +321,9 @@ def _image_data_parts(data: bytes, mime_type: str, *, source_label: str = "") ->
         if sampling is None:
             logger.warning("gemini.gif_sampling_failed source=%s", _safe_source_label(source_label))
             return []
+        presented_parts = _contact_sheet_parts(sampling.frames, _gif_sampling_note(sampling))
+        if presented_parts:
+            return presented_parts
         return [
             genai_types.Part.from_text(text=_gif_sampling_note(sampling)),
             *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
@@ -333,6 +340,9 @@ def _image_data_parts(data: bytes, mime_type: str, *, source_label: str = "") ->
             )
             sampling = None
         if sampling is not None:
+            presented_parts = _contact_sheet_parts(sampling.frames, _webp_sampling_note(sampling))
+            if presented_parts:
+                return presented_parts
             return [
                 genai_types.Part.from_text(text=_webp_sampling_note(sampling)),
                 *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
@@ -349,11 +359,36 @@ def _image_data_parts(data: bytes, mime_type: str, *, source_label: str = "") ->
             )
             sampling = None
         if sampling is not None:
+            presented_parts = _contact_sheet_parts(sampling.frames, _apng_sampling_note(sampling))
+            if presented_parts:
+                return presented_parts
             return [
                 genai_types.Part.from_text(text=_apng_sampling_note(sampling)),
                 *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
             ]
     return [genai_types.Part.from_bytes(data=data, mime_type=normalized_mime_type)]
+
+def _contact_sheet_parts(frames, note_text: str) -> list:
+    try:
+        presentation = present_media_frames(tuple(frames or ()))
+    except Exception as exc:
+        logger.warning("gemini.frame_presentation_failed error_type=%s error=%s", type(exc).__name__, exc)
+        return []
+    if presentation is None:
+        return []
+    return [
+        genai_types.Part.from_text(text=f"{note_text} {_contact_sheet_note(presentation)}"),
+        *(genai_types.Part.from_bytes(data=sheet.data, mime_type=sheet.mime_type) for sheet in presentation.sheets),
+    ]
+
+
+def _contact_sheet_note(presentation) -> str:
+    return (
+        f"The following {len(presentation.sheets)} image parts are contact sheet summaries of the sampled frames, "
+        "not separate single-frame images. Read each contact sheet left-to-right, top-to-bottom; sheets are chronological. "
+        f"sampled_frame_parts={presentation.input_frame_count}, kept_after_dedupe={presentation.kept_frame_count}, "
+        f"dropped_similar_frames={presentation.dropped_similar_count}."
+    )
 
 
 def _gif_sampling_note(sampling) -> str:
@@ -387,8 +422,8 @@ def _video_sampling_note(split_result, filename: str = "") -> str:
     mode = "all" if split_result.sampled_all else "sampled"
     source = f" filename={filename}." if filename else "."
     return (
-        f"The following {len(split_result.frames)} image parts are {mode} sampled JPEG frames from one video,"
-        f"{source} They are in chronological order. Original video frame_count={split_result.frame_count}, "
+        f"The following image parts are {mode} JPEG frames sampled from one video,"
+        f"{source} Original sampled_frame_count={len(split_result.frames)}, original video frame_count={split_result.frame_count}, "
         f"duration_ms={split_result.duration_ms}. Use them together as a temporal sequence."
     )
 

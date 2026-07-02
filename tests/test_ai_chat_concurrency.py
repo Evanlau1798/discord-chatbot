@@ -166,17 +166,42 @@ class AiChatMessageHandlerConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[1].replies[0].content, "ok-1")
         self.assertEqual(messages[2].replies[0].content, "ok-2")
 
+    async def test_on_message_processes_sticker_only_dm(self):
+        cog = AiChat.__new__(AiChat)
+        cog.bot = type("Bot", (), {"user": None})()
+        cog.request_limiter = AiChatRequestLimiter(max_parallel_requests=1)
+        received = []
+
+        async def fake_chat(*, message, dialogue, is_dm):
+            received.append((message.id, dialogue, is_dm))
+            return {
+                "reply_text": "ok-sticker",
+                "image_paths": [],
+                "delivered_message": None,
+                "browser_used": False,
+            }
+
+        cog.chat = fake_chat
+        message = _FakeMessage(100, content="", stickers=[object()])
+
+        with patch.object(ai_chat_module.discord, "DMChannel", _FakeDMChannel):
+            await cog.on_message(message)
+
+        self.assertEqual(received, [(100, "", True)])
+        self.assertEqual(message.replies[0].content, "ok-sticker")
+
 
 class _FakeDMChannel:
     pass
 
 
 class _FakeMessage:
-    def __init__(self, message_id: int):
+    def __init__(self, message_id: int, *, content: str = "hello", stickers=None):
         self.id = message_id
-        self.content = "hello"
+        self.content = content
         self.attachments = []
         self.embeds = []
+        self.stickers = stickers or []
         self.mentions = []
         self.channel = _FakeDMChannel()
         self.author = type("Author", (), {"id": message_id, "bot": False})()

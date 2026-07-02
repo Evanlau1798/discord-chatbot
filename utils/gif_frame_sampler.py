@@ -45,19 +45,30 @@ class AnimatedImageFrameSplitter:
             return None
         if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
             return None
+        source_bytes = bytes(image_bytes)
         try:
-            image = Image.open(io.BytesIO(image_bytes))
+            image = Image.open(io.BytesIO(source_bytes))
         except (OSError, UnidentifiedImageError):
             return None
         try:
             if str(getattr(image, "format", "") or "").upper() not in self.allowed_formats:
                 return None
-            return self._split_open_image(image, max_frames=max_frames)
+            return self._split_open_image(image, max_frames=max_frames, image_bytes=source_bytes)
         finally:
             image.close()
 
-    def _split_open_image(self, image, *, max_frames: int | None) -> GifFrameSamplingResult | None:
+    def _split_open_image(self, image, *, max_frames: int | None, image_bytes: bytes | None = None) -> GifFrameSamplingResult | None:
         durations = _gif_frame_durations(image)
+        frame_image = _fresh_image(image_bytes) if image_bytes else None
+        if frame_image is None:
+            frame_image = image
+        try:
+            return self._split_frames(frame_image, durations, max_frames=max_frames)
+        finally:
+            if frame_image is not image:
+                frame_image.close()
+
+    def _split_frames(self, image, durations: list[int], *, max_frames: int | None) -> GifFrameSamplingResult | None:
         selected_indices = self.selector.select_indices_by_durations(durations, max_frames=max_frames)
         selected_set = set(selected_indices)
         frame_start_times = _frame_start_times(durations)
@@ -105,10 +116,10 @@ class ApngFrameSplitter(AnimatedImageFrameSplitter):
     def __init__(self, config: FrameSplitConfig | None = None):
         super().__init__({"PNG"}, config=config)
 
-    def _split_open_image(self, image, *, max_frames: int | None) -> GifFrameSamplingResult | None:
+    def _split_open_image(self, image, *, max_frames: int | None, image_bytes: bytes | None = None) -> GifFrameSamplingResult | None:
         if not getattr(image, "is_animated", False) or int(getattr(image, "n_frames", 1) or 1) <= 1:
             return None
-        return super()._split_open_image(image, max_frames=max_frames)
+        return super()._split_open_image(image, max_frames=max_frames, image_bytes=image_bytes)
 
 
 def is_gif_mime_type(mime_type: str) -> bool:
@@ -146,6 +157,15 @@ def _gif_frame_durations(image) -> list[int]:
         duration = int(frame.info.get("duration") or DEFAULT_FRAME_DURATION_MS)
         durations.append(max(20, duration))
     return durations or [DEFAULT_FRAME_DURATION_MS]
+
+
+def _fresh_image(image_bytes: bytes | None):
+    if not image_bytes:
+        return None
+    try:
+        return Image.open(io.BytesIO(image_bytes))
+    except (OSError, UnidentifiedImageError):
+        return None
 
 
 def _frame_start_times(durations: list[int]) -> list[int]:

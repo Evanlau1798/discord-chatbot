@@ -71,7 +71,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
         if not is_dm and not is_mention:
             return
         text = self._extract_dialogue_text(message, is_dm=is_dm)
-        if not text and not message.attachments and not getattr(message, "embeds", []):
+        if not text and not message.attachments and not getattr(message, "embeds", []) and not getattr(message, "stickers", []):
             return
         queue_notice = None
 
