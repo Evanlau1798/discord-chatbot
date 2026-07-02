@@ -46,6 +46,10 @@ def collect_message_image_urls(message, dialogue: str, limit: int = MAX_IMAGE_UR
         if url not in urls:
             urls.append(url)
     remaining = max(0, limit - len(urls))
+    for url in _collect_sticker_image_urls(message, limit=remaining):
+        if url not in urls:
+            urls.append(url)
+    remaining = max(0, limit - len(urls))
     for url in sanitize_image_urls(_extract_custom_emoji_urls(dialogue), limit=remaining, require_image_hint=True):
         if url not in urls:
             urls.append(url)
@@ -100,6 +104,12 @@ async def collect_message_media(message, dialogue: str, limit: int = MAX_IMAGE_U
             })
     remaining = max(0, limit - len(content_parts))
     for url in _collect_embed_image_urls(message, limit=remaining):
+        if url in image_urls:
+            continue
+        image_urls.append(url)
+        content_parts.append(_image_url_part(url))
+    remaining = max(0, limit - len(content_parts))
+    for url in _collect_sticker_image_urls(message, limit=remaining):
         if url in image_urls:
             continue
         image_urls.append(url)
@@ -232,6 +242,38 @@ def _collect_embed_image_urls(message, limit: int = MAX_IMAGE_URLS) -> list[str]
                 if len(urls) >= limit:
                     return urls
     return urls
+
+
+def _collect_sticker_image_urls(message, limit: int = MAX_IMAGE_URLS) -> list[str]:
+    urls = []
+    if limit <= 0:
+        return urls
+    for sticker in getattr(message, "stickers", []) or []:
+        if not _is_image_sticker(sticker):
+            continue
+        for normalized in sanitize_image_urls([getattr(sticker, "url", "")], limit=1, require_image_hint=True):
+            if normalized in urls:
+                continue
+            urls.append(normalized)
+            if len(urls) >= limit:
+                return urls
+    return urls
+
+
+def _is_image_sticker(sticker) -> bool:
+    format_name = _sticker_format_name(sticker)
+    if format_name == "lottie":
+        return False
+    url = str(getattr(sticker, "url", "") or "")
+    return _has_image_extension(url) or format_name in {"png", "apng", "gif"}
+
+
+def _sticker_format_name(sticker) -> str:
+    sticker_format = getattr(sticker, "format", None)
+    name = str(getattr(sticker_format, "name", "") or "")
+    if name:
+        return name.lower()
+    return str(sticker_format or "").rsplit(".", 1)[-1].lower()
 
 
 def _iter_embed_image_candidates(embed) -> list[tuple[str, bool]]:

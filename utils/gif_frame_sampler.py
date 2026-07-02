@@ -101,6 +101,16 @@ class WebpFrameSplitter(AnimatedImageFrameSplitter):
         super().__init__({"WEBP"}, config=config)
 
 
+class ApngFrameSplitter(AnimatedImageFrameSplitter):
+    def __init__(self, config: FrameSplitConfig | None = None):
+        super().__init__({"PNG"}, config=config)
+
+    def _split_open_image(self, image, *, max_frames: int | None) -> GifFrameSamplingResult | None:
+        if not getattr(image, "is_animated", False) or int(getattr(image, "n_frames", 1) or 1) <= 1:
+            return None
+        return super()._split_open_image(image, max_frames=max_frames)
+
+
 def is_gif_mime_type(mime_type: str) -> bool:
     return str(mime_type or "").split(";", 1)[0].strip().lower() == "image/gif"
 
@@ -109,12 +119,21 @@ def is_webp_mime_type(mime_type: str) -> bool:
     return str(mime_type or "").split(";", 1)[0].strip().lower() == "image/webp"
 
 
+def is_apng_mime_type(mime_type: str) -> bool:
+    normalized = str(mime_type or "").split(";", 1)[0].strip().lower()
+    return normalized in {"image/png", "image/apng"}
+
+
 def sample_gif_frames(image_bytes: bytes, *, max_frames: int = MAX_GIF_SAMPLE_FRAMES) -> GifFrameSamplingResult | None:
     return GifFrameSplitter().split(image_bytes, max_frames=max_frames)
 
 
 def sample_webp_frames(image_bytes: bytes, *, max_frames: int = MAX_GIF_SAMPLE_FRAMES) -> GifFrameSamplingResult | None:
     return WebpFrameSplitter().split(image_bytes, max_frames=max_frames)
+
+
+def sample_apng_frames(image_bytes: bytes, *, max_frames: int = MAX_GIF_SAMPLE_FRAMES) -> GifFrameSamplingResult | None:
+    return ApngFrameSplitter().split(image_bytes, max_frames=max_frames)
 
 
 def select_gif_frame_indices(durations_ms: list[int] | tuple[int, ...], *, max_frames: int = MAX_GIF_SAMPLE_FRAMES) -> tuple[int, ...]:

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 
 def format_queue_notice_content(update, loading_emoji: str) -> str:
-    prefix = f"-#{loading_emoji} 正在等候訊息發送..."
+    prefix = f"-# {loading_emoji} 正在等候訊息發送..."
     if getattr(update, "status", "") == "waiting":
         return f"{prefix}前面還有{int(getattr(update, 'queue_ahead', 0))}則訊息"
     if getattr(update, "status", "") == "next":
         return f"{prefix}您是下一位!"
-    return f"-#{loading_emoji} 正在輸入回覆..."
+    return f"-# {loading_emoji} 正在輸入回覆..."
 
 
 async def upsert_reply_notice(message, notice, content: str, logger):

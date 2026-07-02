@@ -147,17 +147,17 @@ class AiChatMessageHandlerConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             await started_events[0].wait()
             await _wait_until(lambda: len(messages[1].replies) == 1 and len(messages[2].replies) == 1)
 
-            self.assertEqual(messages[1].replies[0].content, "-#<a:loading:1303077872805744650> 正在等候訊息發送...您是下一位!")
-            self.assertEqual(messages[2].replies[0].content, "-#<a:loading:1303077872805744650> 正在等候訊息發送...前面還有1則訊息")
+            self.assertEqual(messages[1].replies[0].content, "-# <a:loading:1303077872805744650> 正在等候訊息發送...您是下一位!")
+            self.assertEqual(messages[2].replies[0].content, "-# <a:loading:1303077872805744650> 正在等候訊息發送...前面還有1則訊息")
 
             release_events[0].set()
             await started_events[1].wait()
-            await _wait_until(lambda: "-#<a:loading:1303077872805744650> 正在輸入回覆..." in messages[1].replies[0].edits)
-            await _wait_until(lambda: "-#<a:loading:1303077872805744650> 正在等候訊息發送...您是下一位!" in messages[2].replies[0].edits)
+            await _wait_until(lambda: "-# <a:loading:1303077872805744650> 正在輸入回覆..." in messages[1].replies[0].edits)
+            await _wait_until(lambda: "-# <a:loading:1303077872805744650> 正在等候訊息發送...您是下一位!" in messages[2].replies[0].edits)
 
             release_events[1].set()
             await started_events[2].wait()
-            await _wait_until(lambda: "-#<a:loading:1303077872805744650> 正在輸入回覆..." in messages[2].replies[0].edits)
+            await _wait_until(lambda: "-# <a:loading:1303077872805744650> 正在輸入回覆..." in messages[2].replies[0].edits)
 
             release_events[2].set()
             await asyncio.gather(*tasks)

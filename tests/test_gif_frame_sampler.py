@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 
-from utils.gif_frame_sampler import sample_gif_frames, sample_webp_frames, select_gif_frame_indices
+from utils.gif_frame_sampler import sample_apng_frames, sample_gif_frames, sample_webp_frames, select_gif_frame_indices
 
 
 class GifFrameSamplerTests(unittest.TestCase):
@@ -86,6 +86,37 @@ class GifFrameSamplerTests(unittest.TestCase):
         self.assertEqual(len(result.frames), 3)
         self.assertEqual([frame.frame_index for frame in result.frames], [0, 1, 2])
         self.assertTrue(all(frame.mime_type == "image/jpeg" for frame in result.frames))
+
+    def test_samples_apng_to_jpeg_frames(self):
+        Image = _load_pillow_image()
+        frames = [Image.new("RGBA", (24, 24), color) for color in ("red", "green", "blue")]
+        buffer = io.BytesIO()
+        frames[0].save(
+            buffer,
+            format="PNG",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[80, 90, 100],
+            loop=0,
+        )
+
+        result = sample_apng_frames(buffer.getvalue())
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.frame_count, 3)
+        self.assertEqual(result.duration_ms, 270)
+        self.assertTrue(result.sampled_all)
+        self.assertEqual([frame.frame_index for frame in result.frames], [0, 1, 2])
+        self.assertTrue(all(frame.mime_type == "image/jpeg" for frame in result.frames))
+
+    def test_static_png_is_not_sampled_as_apng(self):
+        Image = _load_pillow_image()
+        buffer = io.BytesIO()
+        Image.new("RGBA", (24, 24), "blue").save(buffer, format="PNG")
+
+        result = sample_apng_frames(buffer.getvalue())
+
+        self.assertIsNone(result)
 
 
 def _load_pillow_image():

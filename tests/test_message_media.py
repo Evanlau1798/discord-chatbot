@@ -26,9 +26,22 @@ class FakeAttachment:
 
 
 class FakeMessage:
-    def __init__(self, attachments=None, embeds=None):
+    def __init__(self, attachments=None, embeds=None, stickers=None):
         self.attachments = attachments or []
         self.embeds = embeds or []
+        self.stickers = stickers or []
+
+
+class FakeStickerFormat:
+    def __init__(self, name: str):
+        self.name = name
+
+
+class FakeSticker:
+    def __init__(self, url: str, format_name: str = "apng", name: str = "sticker"):
+        self.url = url
+        self.format = FakeStickerFormat(format_name)
+        self.name = name
 
 
 class FakeEmbedProxy:
@@ -90,6 +103,22 @@ class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
             "https://cdn.discordapp.com/emojis/1301183362861371504.webp?size=96",
             "https://cdn.discordapp.com/emojis/820709254843072522.webp?size=96&animated=true",
         ])
+
+    def test_collects_discord_apng_sticker_url(self):
+        sticker_url = "https://cdn.discordapp.com/stickers/123456789012345678.png"
+        message = FakeMessage(stickers=[FakeSticker(sticker_url, "apng")])
+
+        urls = collect_message_image_urls(message, "")
+
+        self.assertEqual(urls, [sticker_url])
+
+    def test_skips_discord_lottie_sticker_url(self):
+        sticker_url = "https://cdn.discordapp.com/stickers/123456789012345678.json"
+        message = FakeMessage(stickers=[FakeSticker(sticker_url, "lottie")])
+
+        urls = collect_message_image_urls(message, "")
+
+        self.assertEqual(urls, [])
 
     def test_collects_supported_gif_page_url_as_source(self):
         urls = collect_message_source_urls(FakeMessage(), "https://tenor.com/view/test-gif-12345")
@@ -193,6 +222,15 @@ class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(media.image_urls, [emoji_url])
         self.assertEqual(media.content_parts, [{"type": "image_url", "image_url": {"url": emoji_url}}])
+
+    async def test_sticker_media_adds_image_url_part(self):
+        sticker_url = "https://cdn.discordapp.com/stickers/123456789012345678.png"
+        message = FakeMessage(stickers=[FakeSticker(sticker_url, "apng")])
+
+        media = await collect_message_media(message, "")
+
+        self.assertEqual(media.image_urls, [sticker_url])
+        self.assertEqual(media.content_parts, [{"type": "image_url", "image_url": {"url": sticker_url}}])
 
     async def test_resolves_supported_gif_page_url_from_dialogue(self):
         page_url = "https://tenor.com/view/test-gif-12345"
