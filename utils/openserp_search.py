@@ -187,22 +187,31 @@ def _source_score(
     hostname = (urlsplit(source.url).hostname or "").lower()
     official = any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
     relevance = _relevance_score(query, source)
-    authority = source.source_hint.lower() in {"official", "government", "academic", "documentation"}
+    authority = (
+        source.source_category.lower() in {"gov", "edu", "mil"}
+        or source.source_hint.lower() in {"academic", "document"}
+    )
     rank = source.rank if source.rank > 0 else 10_000
-    return official, _profile_score(source.source_hint, source_profile), authority, source.cluster_score, relevance, -rank
+    return official, _profile_score(source, source_profile), authority, source.cluster_score, relevance, -rank
 
 
-def _profile_score(source_hint: str, source_profile: str) -> int:
-    hint = str(source_hint or "").strip().lower().replace("-", "_")
-    preferred = {
-        "official": {"official", "government", "academic", "documentation"},
-        "news": {"news", "press", "media"},
-        "technical": {"documentation", "academic", "technical", "source_code", "official"},
-        "reviews": {"review", "reviews", "community", "forum", "social"},
-        "local": {"local", "directory", "review", "reviews", "community"},
-        "mixed": {"official", "government", "academic", "documentation", "news", "review", "community"},
+def _profile_score(source: OpenSerpSource, source_profile: str) -> int:
+    signals = {
+        str(source.source_hint or "").strip().lower().replace("-", "_"),
+        str(source.source_category or "").strip().lower().replace("-", "_"),
     }
-    return int(hint in preferred.get(source_profile, preferred["mixed"]))
+    preferred = {
+        "official": {"gov", "edu", "mil", "academic", "document"},
+        "news": {"news"},
+        "technical": {"academic", "document", "code_repository", "qa_forum", "edu"},
+        "reviews": {"forum", "social", "marketplace", "social_forum", "social_media", "qa_forum"},
+        "local": {"forum", "social", "marketplace", "social_forum", "social_media"},
+        "mixed": {
+            "gov", "edu", "mil", "academic", "document", "news", "forum", "social",
+            "code_repository", "qa_forum", "social_forum", "social_media",
+        },
+    }
+    return int(bool(signals & preferred.get(source_profile, preferred["mixed"])))
 
 
 def _diversify_domains(ranked: list[tuple[str, OpenSerpSource]]) -> list[tuple[str, OpenSerpSource]]:

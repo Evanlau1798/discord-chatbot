@@ -33,6 +33,7 @@ class OpenSerpSource:
     rank: int = 0
     cluster_score: float = 0.0
     source_hint: str = ""
+    source_category: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ def _parse_response(payload: dict) -> OpenSerpResponse:
             continue
         extracted = item.get("extracted") if isinstance(item.get("extracted"), dict) else {}
         classification = item.get("classification") if isinstance(item.get("classification"), dict) else {}
+        domain_info = item.get("domain_info") if isinstance(item.get("domain_info"), dict) else {}
         engine = _clean_text(item.get("engine"))
         sources.append(
             OpenSerpSource(
@@ -112,6 +114,7 @@ def _parse_response(payload: dict) -> OpenSerpResponse:
                 rank=_safe_int(item.get("rank")),
                 cluster_score=cluster_scores.get(_canonical_url(url), 0.0),
                 source_hint=_clean_text(classification.get("source_hint")),
+                source_category=_clean_text(domain_info.get("category")),
             )
         )
     return OpenSerpResponse(tuple(sources), failed, diagnostics)

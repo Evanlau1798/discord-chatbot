@@ -78,8 +78,8 @@ class OpenSerpQualityTests(unittest.TestCase):
 
     def test_reviews_profile_prioritizes_community_over_official_source(self):
         sources = [
-            ("headphones review", OpenSerpSource("Official headphones", "https://brand.test/product", text="a" * 300, source_hint="official")),
-            ("headphones review", OpenSerpSource("Headphones owner review", "https://forum.test/thread", text="b" * 300, source_hint="community")),
+            ("headphones review", OpenSerpSource("Official headphones", "https://brand.test/product", text="a" * 300)),
+            ("headphones review", OpenSerpSource("Headphones owner review", "https://forum.test/thread", text="b" * 300, source_hint="social_forum", source_category="forum")),
         ]
 
         selected = select_reliable_sources(sources, desired_sources=3, source_profile="reviews")
@@ -88,8 +88,8 @@ class OpenSerpQualityTests(unittest.TestCase):
 
     def test_official_profile_prioritizes_government_source(self):
         sources = [
-            ("typhoon warning", OpenSerpSource("Community report", "https://forum.test/post", text="a" * 300, source_hint="community")),
-            ("typhoon warning", OpenSerpSource("Official warning", "https://weather.gov.test/warning", text="b" * 300, source_hint="government")),
+            ("typhoon warning", OpenSerpSource("Community report", "https://forum.test/post", text="a" * 300, source_hint="social_forum", source_category="forum")),
+            ("typhoon warning", OpenSerpSource("Official warning", "https://weather.gov.test/warning", text="b" * 300, source_category="gov")),
         ]
 
         selected = select_reliable_sources(sources, desired_sources=3, source_profile="official")

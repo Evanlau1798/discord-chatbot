@@ -30,6 +30,8 @@ class OpenSerpClientTests(unittest.TestCase):
                     "url": "https://example.com/docs",
                     "snippet": "Documentation",
                     "engine": "bing",
+                    "domain_info": {"category": "gov"},
+                    "classification": {"source_hint": "document"},
                     "extracted": {"content": "Useful extracted documentation", "format": "markdown"},
                 }
             ],
@@ -56,6 +58,8 @@ class OpenSerpClientTests(unittest.TestCase):
         self.assertEqual(response.failed_engines, ("google",))
         self.assertEqual(response.sources[0].cluster_score, 1.5)
         self.assertEqual(response.sources[0].text, "Useful extracted documentation")
+        self.assertEqual(response.sources[0].source_hint, "document")
+        self.assertEqual(response.sources[0].source_category, "gov")
 
     def test_search_returns_partial_results_when_one_engine_hits_captcha(self):
         payload = {
