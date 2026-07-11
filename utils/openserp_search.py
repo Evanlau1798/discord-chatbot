@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass
 from dataclasses import replace
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -25,6 +27,7 @@ DEFAULT_TOTAL_CHARS = 36_000
 MIN_RELIABLE_SOURCES = 2
 _GLOBAL_SEARCH_LIMITER = threading.BoundedSemaphore(3)
 _TRACKING_PARAMETERS = {"fbclid", "gclid", "msclkid", "ref", "ref_src"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class SearchPlanner:
         self.desired_sources = _env_int(OPENSERP_DESIRED_SOURCES_ENV, DEFAULT_DESIRED_SOURCES, 3, 5)
 
     async def search_many(self, queries: list[str], *, options: SearchOptions | None = None) -> list[BrowserFetchResult]:
+        started_at = time.monotonic()
         planned = self.plan_queries(queries)
         if not planned:
             return []
@@ -68,8 +72,22 @@ class SearchPlanner:
             desired_sources=resolved.desired_sources,
             site_domains=resolved.site_domains,
         )
+        failed_engines = sorted({engine for response in responses for engine in response.failed_engines})
+        diagnostics = tuple(item for response in responses for item in response.diagnostics)
+        source_chars = sum(len(source.text) for _query, source in candidates)
+        selected_chars = sum(len(source.text) for source in selected)
+        logger.info(
+            "openserp.search_complete queries=%s candidates=%s selected=%s failed_engines=%s "
+            "captcha=%s elapsed_ms=%s truncated_chars=%s",
+            len(planned),
+            len(candidates),
+            len(selected),
+            ",".join(failed_engines) or "none",
+            any("captcha" in item.lower() for item in diagnostics),
+            round((time.monotonic() - started_at) * 1000),
+            max(0, source_chars - selected_chars),
+        )
         if len(selected) < MIN_RELIABLE_SOURCES and not _has_first_party_source(selected, resolved.site_domains):
-            diagnostics = tuple(item for response in responses for item in response.diagnostics)
             errors = tuple(response.error for response in responses if response.error)
             return [_unreliable_result(planned, diagnostics, errors)]
         return [_browser_result(source, planned) for source in selected]

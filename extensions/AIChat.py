@@ -220,7 +220,10 @@ class AiChat(AiChatContextMixin, commands.Cog):
             try:
                 return parse_model_response(repair_response.visible_content), repair_response.visible_content
             except ValueError:
-                logger.warning("ai_chat.invalid_json_response preview=%r", repair_response.visible_content[:300])
+                logger.warning(
+                    "ai_chat.invalid_json_response content_chars=%s",
+                    len(repair_response.visible_content or ""),
+                )
                 return build_fallback_response(), repair_response.visible_content
 
     async def _complete_after_browser(
