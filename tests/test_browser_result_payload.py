@@ -96,7 +96,7 @@ class BrowserResultPayloadTests(unittest.TestCase):
                 requested_url="apex hal 吃麥克風 youtube",
                 source_type="search",
                 query="apex hal 吃麥克風 youtube",
-                title="SearXNG Search",
+                title="OpenSERP Search",
                 text="巴哈姆特討論串\nhttps://forum.gamer.com.tw/C.php?bsn=36072&snA=8654",
             ),
         ])

@@ -28,7 +28,6 @@ from utils.browser_text_quality import (
 )
 from utils.http_page_fetcher import HttpPageText
 from utils.message_media import sanitize_image_urls
-from utils.search_provider_api import format_searxng_results as _format_searxng_results
 
 MAX_BROWSER_TEXT_CHARS = 6000
 DEFAULT_BROWSER_TIMEOUT_MS = 30000

@@ -169,7 +169,7 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
             requested_url="台北 天氣",
             source_type="search",
             query="台北 天氣",
-            title="SearXNG Search",
+            title="OpenSERP Search",
             text="Search result text",
         )
         browser_client = FakeBrowserClient()
@@ -191,7 +191,7 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(search_planner.received_queries, ["台北 天氣"])
         self.assertIsNone(browser_client.fetched_targets)
 
-    async def test_youtube_search_uses_ytdlp_searcher_without_searxng(self):
+    async def test_youtube_search_uses_ytdlp_searcher_without_web_provider(self):
         youtube_result = BrowserFetchResult(
             requested_url="Apex Hal eating microphone",
             source_type="youtube_search",
@@ -266,7 +266,7 @@ class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
             requested_url="台北 天氣",
             source_type="search",
             query="台北 天氣",
-            title="SearXNG Search",
+            title="OpenSERP Search",
             text="臺北市 - 縣市預報\n今日白天 27 - 29 70% 悶熱",
         )
         browser_client = FakeBrowserClient()

@@ -34,7 +34,7 @@ The main usage is simple:
   - Handles up to 3 Discord message requests concurrently by default, configurable in `.env`
 
 - **Web search and page reading**
-  - Search always goes through SearXNG, with Google and Bing enabled by default
+  - Search always uses local OpenSERP across Google, Bing, DuckDuckGo, and Ecosia
   - Search results prefer Google sources first and place Bing sources after them
   - Multiple search queries execute up to 3 queries by default, with a 1-second delay between searches
   - User-provided URLs are read directly, not searched first
@@ -59,7 +59,7 @@ The main usage is simple:
 - Python 3.9+
 - Discord Bot token
 - Google GenAI API key
-- SearXNG search service
+- OpenSERP search service built from the pinned `reference/openserp` source
 - `yt-dlp` for YouTube transcripts and video search
 - `ffmpeg` / `ffprobe` for video attachment frame sampling
 - Patchright Chromium for browser fallback
@@ -117,12 +117,12 @@ AI_CHAT_MAX_PARALLEL_REQUESTS=3
 Default search-related settings:
 
 ```env
-SEARXNG_ENGINES=google,bing
-SEARXNG_MERGE_QUERIES=0
-SEARXNG_MAX_QUERIES_PER_TURN=3
-SEARXNG_QUERY_COOLDOWN_SECONDS=1
-SEARXNG_OUTGOING_PROXIES=
-SEARXNG_EXTRA_PROXY_TIMEOUT=10
+OPENSERP_BASE_URL=http://127.0.0.1:17000
+OPENSERP_LANGUAGE=zh-TW
+OPENSERP_REGION=TW
+OPENSERP_TIME_RANGE=
+OPENSERP_MAX_QUERIES_PER_TURN=3
+OPENSERP_DESIRED_SOURCES=3
 YTDLP_REQUEST_COOLDOWN_SECONDS=1
 YOUTUBE_SEARCH_LIMIT=5
 YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN=1
@@ -130,14 +130,10 @@ YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
 YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
 
-By default, queries are not merged. The bot executes up to the first 3 model-provided search queries with a 1-second delay between each search. Set `SEARXNG_MERGE_QUERIES=1` only when you explicitly want multiple queries merged.
-SearXNG and `yt-dlp` each use a single-worker queue. YouTube video search runs only 1 query per turn by default, with a 1-second delay between `yt-dlp` requests. In practice, one precise query with the top 5 YouTube results is usually enough.
+OpenSERP queries multiple engines in parallel, deduplicates results, and extracts the top 3–5 sources. The bot permits at most 3 concurrent OpenSERP requests. Google is globally limited to one request per second by the service; a CAPTCHA ends that Google attempt without blocking partial results from other engines.
 
-If Google still hits CAPTCHA frequently, set `SEARXNG_OUTGOING_PROXIES` in `.env`. Separate multiple proxies with commas or newlines. `./start_searxng.sh` generates SearXNG `settings.yml` with `outgoing.proxies`. SearXNG supports multiple proxies for the same protocol and distributes requests round-robin; when proxies are used, search engines see the proxy-side outbound IP.
-
-```env
-SEARXNG_OUTGOING_PROXIES=http://proxy1:8080,socks5h://proxy2:1080
-```
+Place the pinned source at `reference/openserp`, then run `./start_openserp.sh`. The service maps only to `127.0.0.1:17000` and disables CORS, request-supplied proxy URLs, and CAPTCHA solving by default. Stop it with `./stop_openserp.sh`.
+YouTube search continues to use its separate `yt-dlp` queue, with one query per turn and a one-second request interval by default.
 
 To enable image generation, set `AI_IMAGINE_ENABLED=1`, `AI_IMAGINE_BASE_URL`, `AI_IMAGINE_API_KEY`, and `AI_IMAGINE_MODEL` in `.env`. When disabled, the bot does not ask the model to output `imageGeneration`.
 Image quota is disabled by default in the open-source repo. Set `AI_IMAGINE_RATE_LIMIT_ENABLED=1` to enable it. Each account then starts its own 24-hour window after a successful image generation, with 3 uses by default. Configure the limit and whitelist with `AI_IMAGINE_DAILY_LIMIT` and `AI_IMAGINE_RATE_LIMIT_WHITELIST`; set `IMAGINE_QUOTA_ADMIN_USER_ID` to the Discord user id allowed to reset all image quotas.

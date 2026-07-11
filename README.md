@@ -34,7 +34,7 @@ Discord 伺服器：[加入討論](https://discord.gg/p222BzAtGj)
   - 預設最多同時處理 3 則 Discord 訊息請求，可用 `.env` 調整
 
 - **上網搜尋與讀網頁**
-  - 搜尋一律走 SearXNG，預設同時使用 Google 與 Bing
+  - 搜尋一律走本機 OpenSERP，聚合 Google、Bing、DuckDuckGo 與 Ecosia
   - 搜尋結果會讓 Google 來源優先，Bing 來源排在後面
   - 多個搜尋關鍵字預設最多執行 3 個，且每次搜尋間隔 1 秒
   - 使用者貼 URL 時會直接讀 URL，不先搜尋
@@ -59,7 +59,7 @@ Discord 伺服器：[加入討論](https://discord.gg/p222BzAtGj)
 - Python 3.9+
 - Discord Bot token
 - Google GenAI API key
-- SearXNG 搜尋服務
+- OpenSERP 搜尋服務（從 `reference/openserp` 固定版本建置）
 - `yt-dlp`：YouTube 字幕擷取與影片搜尋
 - `ffmpeg` / `ffprobe`：影片附件抽幀
 - Patchright Chromium：網頁 browser fallback
@@ -117,12 +117,12 @@ AI_CHAT_MAX_PARALLEL_REQUESTS=3
 搜尋相關設定預設如下，可依需要調整：
 
 ```env
-SEARXNG_ENGINES=google,bing
-SEARXNG_MERGE_QUERIES=0
-SEARXNG_MAX_QUERIES_PER_TURN=3
-SEARXNG_QUERY_COOLDOWN_SECONDS=1
-SEARXNG_OUTGOING_PROXIES=
-SEARXNG_EXTRA_PROXY_TIMEOUT=10
+OPENSERP_BASE_URL=http://127.0.0.1:17000
+OPENSERP_LANGUAGE=zh-TW
+OPENSERP_REGION=TW
+OPENSERP_TIME_RANGE=
+OPENSERP_MAX_QUERIES_PER_TURN=3
+OPENSERP_DESIRED_SOURCES=3
 YTDLP_REQUEST_COOLDOWN_SECONDS=1
 YOUTUBE_SEARCH_LIMIT=5
 YOUTUBE_SEARCH_MAX_QUERIES_PER_TURN=1
@@ -130,14 +130,10 @@ YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
 YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
 
-預設不合併 query，而是依序執行模型輸出的前 3 個搜尋關鍵字，每次間隔 1 秒；若要合併多個 query，可把 `SEARXNG_MERGE_QUERIES` 設為 `1`。
-SearXNG 與 `yt-dlp` 會各自使用單工 queue；YouTube 影片搜尋預設每輪只執行 1 個 query，並讓 `yt-dlp` request 間隔 1 秒。通常讓模型產生一個精準 query，再取前 5 個 YouTube 結果就夠用。
+OpenSERP 會平行查詢多個引擎、去重並擷取前 3–5 個來源。Bot 最多同時送出 3 個 OpenSERP 請求；Google 在服務端限制為全域每秒一次，遇到 CAPTCHA 時不重試 Google，其他引擎仍會回傳 partial success。
 
-如果 Google 仍頻繁出現 CAPTCHA，可以在 `.env` 設定 `SEARXNG_OUTGOING_PROXIES`，多個 proxy 用逗號或換行分隔。`./start_searxng.sh` 會把它生成到 SearXNG `settings.yml` 的 `outgoing.proxies`。SearXNG 支援同協定多個 proxy 並以 round-robin 分配請求；使用 proxy 時，真正對搜尋引擎顯示的出口 IP 會由 proxy 端決定。
-
-```env
-SEARXNG_OUTGOING_PROXIES=http://proxy1:8080,socks5h://proxy2:1080
-```
+先確認固定版本原始碼位於 `reference/openserp`，再執行 `./start_openserp.sh`。服務只會映射到 `127.0.0.1:17000`，且預設關閉 CORS、request proxy URL 與 CAPTCHA solver。停止服務使用 `./stop_openserp.sh`。
+YouTube 影片搜尋仍使用獨立的 `yt-dlp` queue，預設每輪只執行 1 個 query，並讓 request 間隔 1 秒。
 
 若要啟用生圖，請在 `.env` 設定 `AI_IMAGINE_ENABLED=1`、`AI_IMAGINE_BASE_URL`、`AI_IMAGINE_API_KEY` 與 `AI_IMAGINE_MODEL`。關閉時 bot 不會在 prompt 中要求模型輸出 `imageGeneration`。
 生圖額度限制在開源預設中關閉；若設定 `AI_IMAGINE_RATE_LIMIT_ENABLED=1`，每個帳號會在成功繪圖後開始計算 24 小時窗口，預設最多 3 次。可用 `AI_IMAGINE_DAILY_LIMIT` 與 `AI_IMAGINE_RATE_LIMIT_WHITELIST` 調整限制與白名單；`IMAGINE_QUOTA_ADMIN_USER_ID` 可指定允許重置所有繪圖額度的 Discord user id。
