@@ -11,7 +11,7 @@ class JsonResponseProtocolBrowserTests(unittest.TestCase):
             """
             {"browser":{"search":{"queries":["OpenAI pricing","OpenAI API cost"],
             "language":"en","region":"US","timeRange":"month",
-            "siteDomains":["openai.com"],"desiredSources":5}}}
+            "siteDomains":["openai.com"],"sourceProfile":"official","desiredSources":5}}}
             """
         )
 
@@ -21,6 +21,7 @@ class JsonResponseProtocolBrowserTests(unittest.TestCase):
         self.assertEqual(parsed.browser.search_options.time_range, "month")
         self.assertEqual(parsed.browser.search_options.site_domains, ("openai.com",))
         self.assertEqual(parsed.browser.search_options.desired_sources, 5)
+        self.assertEqual(parsed.browser.search_options.source_profile, "official")
 
     def test_legacy_search_query_uses_safe_defaults(self):
         parsed = parse_model_response('{"browser":{"searchQuery":"台北 天氣"}}')
@@ -28,6 +29,13 @@ class JsonResponseProtocolBrowserTests(unittest.TestCase):
         self.assertEqual(parsed.browser.search_queries, ["台北 天氣"])
         self.assertEqual(parsed.browser.search_options.language, "zh-TW")
         self.assertEqual(parsed.browser.search_options.desired_sources, 3)
+        self.assertEqual(parsed.browser.search_options.source_profile, "mixed")
+
+    def test_unknown_search_source_profile_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "sourceProfile"):
+            parse_model_response(
+                '{"browser":{"search":{"queries":["query"],"sourceProfile":"social"}}}'
+            )
 
     def test_browser_youtube_search_query_is_parsed(self):
         parsed = parse_model_response(

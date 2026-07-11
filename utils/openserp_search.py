@@ -39,6 +39,7 @@ class SearchOptions:
     time_range: str = ""
     site_domains: tuple[str, ...] = ()
     desired_sources: int = DEFAULT_DESIRED_SOURCES
+    source_profile: str = "mixed"
 
 
 class SearchPlanner:

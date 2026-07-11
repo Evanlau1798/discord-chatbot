@@ -39,6 +39,9 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("browser.youtubeSearchQuery", prompt)
         self.assertIn("siteDomains", prompt)
         self.assertIn("desiredSources", prompt)
+        self.assertIn("sourceProfile", prompt)
+        self.assertIn("每個 query 都必須脫離目前對話後仍能單獨理解", prompt)
+        self.assertIn("多個合理指涉對象", prompt)
 
     def test_system_prompt_requires_cross_language_media_search_queries(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})

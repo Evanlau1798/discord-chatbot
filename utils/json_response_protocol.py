@@ -10,6 +10,7 @@ from utils.openserp_search import SearchOptions
 
 CODE_BLOCK_PATTERN = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 FALLBACK_REPLY = "回覆格式不合法，這次無法正確處理模型回應。"
+SEARCH_SOURCE_PROFILES = frozenset({"mixed", "official", "news", "technical", "reviews", "local"})
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,7 @@ def build_repair_instruction() -> str:
     schema = '{"replyText":"..."'
     if image_generation_enabled:
         schema += ',"imageGeneration":{"needed":true,"prompt":"..."}'
-    schema += ',"memory":{"update":true,"content":"..."},"browser":{"search":{"queries":["..."],"language":"zh-TW","region":"TW","desiredSources":3},"youtubeSearchQuery":"..."}}'
+    schema += ',"memory":{"update":true,"content":"..."},"browser":{"search":{"queries":["..."],"language":"zh-TW","region":"TW","sourceProfile":"mixed","desiredSources":3},"youtubeSearchQuery":"..."}}'
     parts = [
         "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
         f"格式固定為 {schema}。",
@@ -97,7 +98,7 @@ def build_repair_instruction() -> str:
     if image_generation_enabled:
         parts.append("除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。")
     parts.extend([
-        "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.search.queries 的精簡查詢關鍵字；可選擇提供 language、region、timeRange、siteDomains 與 3 到 5 的 desiredSources；"
+        "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.search.queries 的精簡查詢關鍵字；可選擇提供 language、region、timeRange、siteDomains、sourceProfile 與 3 到 5 的 desiredSources；"
         "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser.youtubeSearchQuery；"
         "收到 browserResults 後才輸出具有人設語氣的 replyText。"
         "若前一輪需要搜尋海外人物、遊戲、實況主、影片、梗圖或片段，請使用英文別名、常見英文說法與最多三個查詢關鍵字，"
@@ -258,12 +259,16 @@ def _parse_search_options(value) -> SearchOptions:
     desired = value.get("desiredSources", 3)
     if not isinstance(desired, int) or isinstance(desired, bool):
         raise ValueError("browser.search.desiredSources must be an integer")
+    source_profile = (_optional_text(value.get("sourceProfile")) or "mixed").lower()
+    if source_profile not in SEARCH_SOURCE_PROFILES:
+        raise ValueError("browser.search.sourceProfile is not supported")
     return SearchOptions(
         language=language[:20],
         region=region[:10],
         time_range=time_range[:20],
         site_domains=domains,
         desired_sources=min(max(desired, 3), 5),
+        source_profile=source_profile,
     )
 
 
