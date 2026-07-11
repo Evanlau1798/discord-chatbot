@@ -25,7 +25,14 @@ RELIABLE_RESULT_INSTRUCTION = (
 NO_RELIABLE_RESULT_INSTRUCTION = (
     "browserResults 為空，表示這次無法取得可靠網頁內容。"
     "請不要編造查詢結果，也不要提及 CAPTCHA、反機器人驗證、工具錯誤或網站阻擋；"
-    "請用自然語氣簡短說明目前無法可靠查到。"
+    "請用自然語氣說明目前無法可靠查到，並提供一到三個具體替代搜尋關鍵字，"
+    "或指出需要使用者補充的完整名稱、地點、時間範圍或指定網站；不要只說找不到。"
+)
+SEARCH_RETRY_INSTRUCTION = (
+    "browserResults 為空，表示第一次搜尋沒有取得可靠網頁內容。"
+    "你有且只有一次改寫搜尋的機會；若能從對話確認目標，請只輸出 browser.search.queries 的一到三個新查詢，不要輸出 replyText。"
+    "新查詢不可重複先前 query，且必須具體調整人物或產品全名、原文別名、地點、時間範圍或來源方向；不可只改標點或詞序。"
+    "若目標仍有歧義，請直接在 replyText 詢問缺少的資訊，不要再次搜尋。"
 )
 INLINE_BROWSER_CONTEXT_INSTRUCTION = (
     "prefetchedBrowserContext 是系統已根據本輪使用者明確 URL 預先讀取的網頁附件。"
@@ -34,10 +41,14 @@ INLINE_BROWSER_CONTEXT_INSTRUCTION = (
 )
 
 
-def build_browser_followup_payload(results: list[BrowserFetchResult]) -> dict:
+def build_browser_followup_payload(
+    results: list[BrowserFetchResult], *, allow_search_retry: bool = False
+) -> dict:
     return {
         "inputType": "browser_results",
-        "payload": _build_context_payload(results, _browser_instruction),
+        "payload": _build_context_payload(
+            results, lambda readable: _browser_instruction(readable, allow_search_retry)
+        ),
     }
 
 
@@ -55,18 +66,20 @@ def _build_context_payload(results: list[BrowserFetchResult], instruction_builde
     }
 
 
-def build_browser_followup_content(results: list[BrowserFetchResult]) -> str | list[dict]:
-    payload = build_browser_followup_payload(results)
+def build_browser_followup_content(
+    results: list[BrowserFetchResult], *, allow_search_retry: bool = False
+) -> str | list[dict]:
+    payload = build_browser_followup_payload(results, allow_search_retry=allow_search_retry)
     image_urls = collect_browser_result_image_urls(results)
     return build_multimodal_content(json.dumps(payload, ensure_ascii=False), image_urls)
 
 
-def _browser_instruction(readable_results: list[BrowserFetchResult]) -> str:
+def _browser_instruction(readable_results: list[BrowserFetchResult], allow_search_retry: bool = False) -> str:
     if readable_results:
         if is_image_generation_enabled():
             return RELIABLE_RESULT_INSTRUCTION_WITH_IMAGE_GENERATION
         return RELIABLE_RESULT_INSTRUCTION
-    return NO_RELIABLE_RESULT_INSTRUCTION
+    return SEARCH_RETRY_INSTRUCTION if allow_search_retry else NO_RELIABLE_RESULT_INSTRUCTION
 
 
 def _sanitized_payload(result: BrowserFetchResult) -> dict:

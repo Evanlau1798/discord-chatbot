@@ -10,6 +10,10 @@ from utils.openserp_search import SearchOptions
 
 CODE_BLOCK_PATTERN = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 FALLBACK_REPLY = "回覆格式不合法，這次無法正確處理模型回應。"
+SEARCH_FAILURE_REPLY = (
+    "目前仍無法取得足夠可靠的資料。請補充更完整的名稱、所在地區、時間範圍或指定網站，"
+    "我可以依這些線索換個方向搜尋。"
+)
 SEARCH_SOURCE_PROFILES = frozenset({"mixed", "official", "news", "technical", "reviews", "local"})
 
 
@@ -77,6 +81,10 @@ def parse_model_response(text: str) -> ParsedAIResponse:
 
 def build_fallback_response() -> ParsedAIResponse:
     return ParsedAIResponse(reply_text=FALLBACK_REPLY)
+
+
+def build_search_failure_response() -> ParsedAIResponse:
+    return ParsedAIResponse(reply_text=SEARCH_FAILURE_REPLY)
 
 
 def build_repair_instruction() -> str:

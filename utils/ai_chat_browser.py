@@ -5,6 +5,8 @@ from utils.browser_result_types import BrowserFetchResult
 from utils.openserp_search import SearchOptions, plan_search_queries_from_env
 from utils.youtube_search_reader import plan_youtube_search_queries_from_env
 
+CAPTCHA_MARKERS = ("captcha", "反機器人", "anti-bot", "challenge")
+
 
 async def fetch_browser_results(
     browser_client,
@@ -57,6 +59,36 @@ def build_browser_error_results(
         for request in find_requests
     )
     return results
+
+
+def search_fallback_allowed(results: list[BrowserFetchResult], attempted_queries: list[str]) -> bool:
+    if not attempted_queries or any(_has_readable_content(result) for result in results):
+        return False
+    failure_summary = " ".join(
+        str(value or "")
+        for result in results
+        for value in (result.error, *result.diagnostics)
+    )
+    return not any(marker in failure_summary.lower() for marker in CAPTCHA_MARKERS)
+
+
+def new_fallback_queries(candidates: list[str], attempted_queries: list[str]) -> list[str]:
+    attempted = {_query_identity(query) for query in attempted_queries}
+    unique = []
+    for query in candidates:
+        normalized = str(query or "").strip()
+        identity = _query_identity(normalized)
+        if normalized and identity not in attempted and identity not in {_query_identity(item) for item in unique}:
+            unique.append(normalized)
+    return unique[:3]
+
+
+def _has_readable_content(result: BrowserFetchResult) -> bool:
+    return bool(str(result.text or "").strip() or result.image_urls)
+
+
+def _query_identity(query: str) -> str:
+    return " ".join(str(query or "").lower().split())
 
 
 def format_browser_notice_targets(

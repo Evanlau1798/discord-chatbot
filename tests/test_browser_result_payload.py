@@ -89,6 +89,18 @@ class BrowserResultPayloadTests(unittest.TestCase):
         self.assertNotIn("不要嘲諷", payload["payload"]["instruction"])
         self.assertNotIn("冷門", payload["payload"]["instruction"])
         self.assertNotIn("不要宣稱目標內容不存在", payload["payload"]["instruction"])
+        self.assertIn("具體替代搜尋關鍵字", payload["payload"]["instruction"])
+
+    def test_empty_results_can_allow_one_controlled_search_rewrite(self):
+        payload = build_browser_followup_payload(
+            [BrowserFetchResult(requested_url="query", source_type="search", error="insufficient")],
+            allow_search_retry=True,
+        )
+
+        instruction = payload["payload"]["instruction"]
+        self.assertIn("有且只有一次", instruction)
+        self.assertIn("不可重複", instruction)
+        self.assertIn("不要輸出 replyText", instruction)
 
     def test_followup_instruction_requires_direct_youtube_url_for_video_requests(self):
         payload = build_browser_followup_payload([

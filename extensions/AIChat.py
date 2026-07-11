@@ -12,12 +12,12 @@ from discord.ext import commands
 from google.genai import errors as genai_errors
 
 from utils.EmbedMessage import SakuraEmbedMsg
-from utils.ai_chat_browser import fetch_browser_results, format_browser_notice_targets
+from utils.ai_chat_browser import format_browser_notice_targets
+from utils.ai_chat_browser_flow import AiChatBrowserFlowMixin
 from utils.ai_chat_concurrency import AiChatRequestLimiter
 from utils.ai_chat_settings import AiChatUserSettingsStore
 from utils.ai_chat_context import AiChatContextMixin, MAX_CHAT_TURNS
 from utils.ai_imagine_client import ImagineAPIError, ImagineClient
-from utils.browser_result_payload import build_browser_followup_content
 from utils.discord_notice_timing import MIN_BROWSER_NOTICE_DISPLAY_SECONDS, wait_for_min_notice_display
 from utils.discord_files import send_content_with_files
 from utils.discord_presence import keep_typing
@@ -39,7 +39,7 @@ GENAI_RETRY_DELAYS = (1, 5, 5, 10, 30)
 LOADING_EMOJI = "<a:loading:1303077872805744650>"
 
 
-class AiChat(AiChatContextMixin, commands.Cog):
+class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
     def __init__(self, bot):
         self.bot: discord.Bot = bot
         self.user_history = self.load_user_history()
@@ -225,39 +225,6 @@ class AiChat(AiChatContextMixin, commands.Cog):
                     len(repair_response.visible_content or ""),
                 )
                 return build_fallback_response(), repair_response.visible_content
-
-    async def _complete_after_browser(
-        self,
-        request_messages: list[dict],
-        raw_response: str,
-        urls: list[str],
-        search_queries: list[str],
-        youtube_search_queries: list[str],
-        find_requests: list,
-        include_images: bool,
-        search_options,
-        message: discord.Message,
-        cached_content: str | None,
-    ):
-        browser_notice = await self._send_browser_notice(message, urls, search_queries, youtube_search_queries, find_requests)
-        browser_notice_sent_at = asyncio.get_running_loop().time() if browser_notice is not None else None
-        browser_results = await fetch_browser_results(
-            self.browser_client,
-            urls,
-            search_queries,
-            find_requests,
-            logger,
-            include_images,
-            youtube_search_queries=youtube_search_queries,
-            search_options=search_options,
-        )
-        await self._set_browser_reading_notice(browser_notice, browser_notice_sent_at)
-        followup_messages = request_messages + [
-            {"role": "assistant", "content": raw_response},
-            {"role": "user", "content": build_browser_followup_content(browser_results)},
-        ]
-        parsed, _ = await self._complete_and_parse_with_raw(followup_messages, message, cached_content)
-        return parsed, browser_notice
 
     async def _complete_with_retry(self, messages: list[dict], message: discord.Message, cached_content: str | None):
         retry_notice = None
