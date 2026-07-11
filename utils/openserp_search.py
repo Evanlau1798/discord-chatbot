@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import threading
+from dataclasses import replace
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from utils.browser_actions import normalize_search_queries
+from utils.browser_result_types import BrowserFetchResult
+from utils.openserp_client import DEFAULT_OPENSERP_BASE_URL, OpenSerpClient, OpenSerpSearchRequest, OpenSerpSource
+
+OPENSERP_BASE_URL_ENV = "OPENSERP_BASE_URL"
+OPENSERP_MAX_QUERIES_ENV = "OPENSERP_MAX_QUERIES_PER_TURN"
+OPENSERP_LANGUAGE_ENV = "OPENSERP_LANGUAGE"
+OPENSERP_REGION_ENV = "OPENSERP_REGION"
+OPENSERP_TIME_RANGE_ENV = "OPENSERP_TIME_RANGE"
+OPENSERP_DESIRED_SOURCES_ENV = "OPENSERP_DESIRED_SOURCES"
+DEFAULT_MAX_QUERIES = 3
+DEFAULT_DESIRED_SOURCES = 3
+DEFAULT_PER_SOURCE_CHARS = 12_000
+DEFAULT_TOTAL_CHARS = 36_000
+MIN_RELIABLE_SOURCES = 2
+_GLOBAL_SEARCH_LIMITER = threading.BoundedSemaphore(3)
+_TRACKING_PARAMETERS = {"fbclid", "gclid", "msclkid", "ref", "ref_src"}
+
+
+class SearchPlanner:
+    def __init__(self, timeout_ms: int, *, client: OpenSerpClient | None = None):
+        self.timeout_ms = timeout_ms
+        base_url = os.getenv(OPENSERP_BASE_URL_ENV, DEFAULT_OPENSERP_BASE_URL).strip() or DEFAULT_OPENSERP_BASE_URL
+        self.client = client or OpenSerpClient(base_url, timeout_ms)
+        self.max_queries = _env_int(OPENSERP_MAX_QUERIES_ENV, DEFAULT_MAX_QUERIES, 1, 3)
+        self.language = os.getenv(OPENSERP_LANGUAGE_ENV, "zh-TW").strip() or "zh-TW"
+        self.region = os.getenv(OPENSERP_REGION_ENV, "").strip()
+        self.time_range = os.getenv(OPENSERP_TIME_RANGE_ENV, "").strip()
+        self.desired_sources = _env_int(OPENSERP_DESIRED_SOURCES_ENV, DEFAULT_DESIRED_SOURCES, 3, 5)
+
+    async def search_many(self, queries: list[str]) -> list[BrowserFetchResult]:
+        planned = self.plan_queries(queries)
+        if not planned:
+            return []
+        responses = await asyncio.gather(*(asyncio.to_thread(self._search_limited, query) for query in planned))
+        candidates = [
+            (query, source)
+            for query, response in zip(planned, responses)
+            for source in response.sources
+        ]
+        selected = select_reliable_sources(candidates, desired_sources=self.desired_sources)
+        if len(selected) < MIN_RELIABLE_SOURCES:
+            diagnostics = tuple(item for response in responses for item in response.diagnostics)
+            errors = tuple(response.error for response in responses if response.error)
+            return [_unreliable_result(planned, diagnostics, errors)]
+        return [_browser_result(source, planned) for source in selected]
+
+    def plan_queries(self, queries: list[str]) -> list[str]:
+        return normalize_search_queries(queries)[: self.max_queries]
+
+    def _search_limited(self, query: str):
+        with _GLOBAL_SEARCH_LIMITER:
+            return self.client.search(
+                OpenSerpSearchRequest(
+                    query=query,
+                    language=self.language,
+                    region=self.region,
+                    time_range=self.time_range,
+                    desired_sources=self.desired_sources,
+                )
+            )
+
+
+def select_reliable_sources(
+    candidates: list[tuple[str, OpenSerpSource]],
+    *,
+    desired_sources: int,
+    site_domains: tuple[str, ...] = (),
+    per_source_chars: int = DEFAULT_PER_SOURCE_CHARS,
+    total_chars: int = DEFAULT_TOTAL_CHARS,
+) -> list[OpenSerpSource]:
+    merged: dict[str, tuple[str, OpenSerpSource]] = {}
+    for query, source in candidates:
+        canonical = canonicalize_source_url(source.url)
+        if not canonical or not source.text.strip():
+            continue
+        normalized = replace(source, url=canonical)
+        current = merged.get(canonical)
+        if current is None or _source_score(query, normalized, site_domains) > _source_score(current[0], current[1], site_domains):
+            merged[canonical] = (query, normalized)
+    ranked = sorted(
+        merged.values(),
+        key=lambda item: _source_score(item[0], item[1], site_domains),
+        reverse=True,
+    )
+    selected = []
+    remaining = max(0, int(total_chars))
+    for _query, source in ranked[: max(1, min(5, int(desired_sources)))]:
+        if remaining <= 0:
+            break
+        limit = min(max(1, int(per_source_chars)), remaining)
+        clipped = source.text[:limit]
+        if not clipped:
+            continue
+        selected.append(replace(source, text=clipped))
+        remaining -= len(clipped)
+    return selected
+
+
+def canonicalize_source_url(value: str) -> str:
+    try:
+        parsed = urlsplit(str(value or "").strip())
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return ""
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname.lower()
+    port = parsed.port
+    netloc = hostname if port in {None, 80 if scheme == "http" else 443} else f"{hostname}:{port}"
+    path = parsed.path.rstrip("/") or ""
+    query = urlencode(sorted(
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_") and key.lower() not in _TRACKING_PARAMETERS
+    ))
+    return urlunsplit((scheme, netloc, path, query, ""))
+
+
+def _source_score(query: str, source: OpenSerpSource, site_domains: tuple[str, ...]) -> tuple:
+    hostname = (urlsplit(source.url).hostname or "").lower()
+    official = any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
+    terms = {term for term in re.findall(r"[\w-]+", query.lower()) if len(term) > 1}
+    haystack = f"{source.title} {source.snippet} {source.domain}".lower()
+    relevance = sum(1 for term in terms if term in haystack)
+    authority = source.source_hint.lower() in {"official", "government", "academic", "documentation"}
+    rank = source.rank if source.rank > 0 else 10_000
+    return official, authority, source.cluster_score, relevance, -rank
+
+
+def _browser_result(source: OpenSerpSource, queries: list[str]) -> BrowserFetchResult:
+    engine_text = ",".join(source.engines) or "unknown"
+    return BrowserFetchResult(
+        requested_url=source.url,
+        source_type="search",
+        query=" | ".join(queries),
+        final_url=source.url,
+        title=source.title,
+        text=source.text,
+        content_format=source.content_format or "markdown",
+        total_chars=len(source.text),
+        diagnostics=("openserp", f"engines:{engine_text}", f"cluster_score:{source.cluster_score:g}"),
+    )
+
+
+def _unreliable_result(queries: list[str], diagnostics: tuple[str, ...], errors: tuple[str, ...]) -> BrowserFetchResult:
+    detail = errors[0] if errors else "OpenSERP 可讀來源少於 2 個。"
+    return BrowserFetchResult(
+        requested_url=" | ".join(queries),
+        source_type="search",
+        query=" | ".join(queries),
+        title="OpenSERP Search",
+        error=f"搜尋可靠來源不足: {detail}",
+        diagnostics=("openserp_insufficient_sources", *diagnostics[:8]),
+    )
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)).strip())
+    except ValueError:
+        value = default
+    return min(max(value, minimum), maximum)
