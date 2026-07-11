@@ -96,6 +96,16 @@ class OpenSerpQualityTests(unittest.TestCase):
 
         self.assertEqual(selected[0].url, "https://weather.gov.test/warning")
 
+    def test_technical_profile_infers_documentation_when_openserp_hint_is_empty(self):
+        sources = [
+            ("python threading documentation", OpenSerpSource("Python discussion", "https://forum.test/python", text="a" * 300, source_category="forum")),
+            ("python threading documentation", OpenSerpSource("Python threading documentation", "https://docs.python.org/3/howto/free-threading-python.html", text="b" * 300)),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3, source_profile="technical")
+
+        self.assertEqual(selected[0].url, "https://docs.python.org/3/howto/free-threading-python.html")
+
     def test_selection_diversifies_domains_before_repeated_pages(self):
         sources = [
             ("python release", OpenSerpSource("Python one", "https://python.test/one", text="a" * 300, cluster_score=3)),

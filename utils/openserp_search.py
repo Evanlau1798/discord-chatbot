@@ -187,19 +187,33 @@ def _source_score(
     hostname = (urlsplit(source.url).hostname or "").lower()
     official = any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
     relevance = _relevance_score(query, source)
-    authority = (
-        source.source_category.lower() in {"gov", "edu", "mil"}
-        or source.source_hint.lower() in {"academic", "document"}
-    )
+    signals = _source_signals(source)
+    authority = bool(signals & {"gov", "edu", "mil", "academic", "document"})
     rank = source.rank if source.rank > 0 else 10_000
-    return official, _profile_score(source, source_profile), authority, source.cluster_score, relevance, -rank
+    return official, _profile_score(signals, source_profile), authority, source.cluster_score, relevance, -rank
 
 
-def _profile_score(source: OpenSerpSource, source_profile: str) -> int:
+def _source_signals(source: OpenSerpSource) -> set[str]:
+    parsed = urlsplit(source.url)
+    hostname = (parsed.hostname or source.domain or "").lower().removeprefix("www.")
+    title = source.title.lower()
     signals = {
         str(source.source_hint or "").strip().lower().replace("-", "_"),
         str(source.source_category or "").strip().lower().replace("-", "_"),
     }
+    if hostname.startswith(("docs.", "developer.")) or "/docs" in parsed.path.lower() or "documentation" in title:
+        signals.add("document")
+    if hostname in {"github.com", "gitlab.com"}:
+        signals.add("code_repository")
+    if hostname in {"stackoverflow.com", "stackexchange.com"} or hostname.endswith(".stackexchange.com"):
+        signals.add("qa_forum")
+    if ".gov." in hostname or hostname.endswith(".gov"):
+        signals.add("gov")
+    signals.discard("")
+    return signals
+
+
+def _profile_score(signals: set[str], source_profile: str) -> int:
     preferred = {
         "official": {"gov", "edu", "mil", "academic", "document"},
         "news": {"news"},
@@ -207,8 +221,7 @@ def _profile_score(source: OpenSerpSource, source_profile: str) -> int:
         "reviews": {"forum", "social", "marketplace", "social_forum", "social_media", "qa_forum"},
         "local": {"forum", "social", "marketplace", "social_forum", "social_media"},
         "mixed": {
-            "gov", "edu", "mil", "academic", "document", "news", "forum", "social",
-            "code_repository", "qa_forum", "social_forum", "social_media",
+            "gov", "edu", "mil", "academic", "document", "news",
         },
     }
     return int(bool(signals & preferred.get(source_profile, preferred["mixed"])))
