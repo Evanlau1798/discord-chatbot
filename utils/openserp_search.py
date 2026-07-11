@@ -74,6 +74,7 @@ class SearchPlanner:
             candidates,
             desired_sources=resolved.desired_sources,
             site_domains=resolved.site_domains,
+            source_profile=resolved.source_profile,
         )
         failed_engines = sorted({engine for response in responses for engine in response.failed_engines})
         diagnostics = tuple(item for response in responses for item in response.diagnostics)
@@ -90,7 +91,7 @@ class SearchPlanner:
             round((time.monotonic() - started_at) * 1000),
             max(0, source_chars - selected_chars),
         )
-        if len(selected) < MIN_RELIABLE_SOURCES and not _has_first_party_source(selected, resolved.site_domains):
+        if _distinct_source_count(selected) < MIN_RELIABLE_SOURCES and not _has_first_party_source(selected, resolved.site_domains):
             errors = tuple(response.error for response in responses if response.error)
             return [_unreliable_result(planned, diagnostics, errors)]
         return [_browser_result(source, planned) for source in selected]
@@ -117,6 +118,7 @@ def select_reliable_sources(
     *,
     desired_sources: int,
     site_domains: tuple[str, ...] = (),
+    source_profile: str = "mixed",
     per_source_chars: int = DEFAULT_PER_SOURCE_CHARS,
     total_chars: int = DEFAULT_TOTAL_CHARS,
 ) -> list[OpenSerpSource]:
@@ -129,13 +131,14 @@ def select_reliable_sources(
         if _relevance_score(query, normalized) == 0:
             continue
         current = merged.get(canonical)
-        if current is None or _source_score(query, normalized, site_domains) > _source_score(current[0], current[1], site_domains):
+        if current is None or _source_score(query, normalized, site_domains, source_profile) > _source_score(current[0], current[1], site_domains, source_profile):
             merged[canonical] = (query, normalized)
     ranked = sorted(
         merged.values(),
-        key=lambda item: _source_score(item[0], item[1], site_domains),
+        key=lambda item: _source_score(item[0], item[1], site_domains, source_profile),
         reverse=True,
     )
+    ranked = _diversify_domains(ranked)
     selected = []
     remaining = max(0, int(total_chars))
     for _query, source in ranked[: max(1, min(5, int(desired_sources)))]:
@@ -175,13 +178,52 @@ def plan_search_queries_from_env(queries: list[str]) -> list[str]:
     return normalize_search_queries(queries)[:maximum]
 
 
-def _source_score(query: str, source: OpenSerpSource, site_domains: tuple[str, ...]) -> tuple:
+def _source_score(
+    query: str,
+    source: OpenSerpSource,
+    site_domains: tuple[str, ...],
+    source_profile: str,
+) -> tuple:
     hostname = (urlsplit(source.url).hostname or "").lower()
     official = any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
     relevance = _relevance_score(query, source)
     authority = source.source_hint.lower() in {"official", "government", "academic", "documentation"}
     rank = source.rank if source.rank > 0 else 10_000
-    return official, authority, source.cluster_score, relevance, -rank
+    return official, _profile_score(source.source_hint, source_profile), authority, source.cluster_score, relevance, -rank
+
+
+def _profile_score(source_hint: str, source_profile: str) -> int:
+    hint = str(source_hint or "").strip().lower().replace("-", "_")
+    preferred = {
+        "official": {"official", "government", "academic", "documentation"},
+        "news": {"news", "press", "media"},
+        "technical": {"documentation", "academic", "technical", "source_code", "official"},
+        "reviews": {"review", "reviews", "community", "forum", "social"},
+        "local": {"local", "directory", "review", "reviews", "community"},
+        "mixed": {"official", "government", "academic", "documentation", "news", "review", "community"},
+    }
+    return int(hint in preferred.get(source_profile, preferred["mixed"]))
+
+
+def _diversify_domains(ranked: list[tuple[str, OpenSerpSource]]) -> list[tuple[str, OpenSerpSource]]:
+    unique = []
+    repeated = []
+    seen = set()
+    for item in ranked:
+        domain = _source_domain(item[1])
+        target = repeated if domain in seen else unique
+        target.append(item)
+        seen.add(domain)
+    return [*unique, *repeated]
+
+
+def _distinct_source_count(sources: list[OpenSerpSource]) -> int:
+    return len({_source_domain(source) for source in sources if _source_domain(source)})
+
+
+def _source_domain(source: OpenSerpSource) -> str:
+    hostname = (urlsplit(source.url).hostname or source.domain or "").lower()
+    return hostname.removeprefix("www.")
 
 
 def _relevance_score(query: str, source: OpenSerpSource) -> int:

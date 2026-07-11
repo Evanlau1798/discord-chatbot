@@ -76,6 +76,40 @@ class OpenSerpQualityTests(unittest.TestCase):
 
         self.assertEqual(len(selected), 1)
 
+    def test_reviews_profile_prioritizes_community_over_official_source(self):
+        sources = [
+            ("headphones review", OpenSerpSource("Official headphones", "https://brand.test/product", text="a" * 300, source_hint="official")),
+            ("headphones review", OpenSerpSource("Headphones owner review", "https://forum.test/thread", text="b" * 300, source_hint="community")),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3, source_profile="reviews")
+
+        self.assertEqual(selected[0].url, "https://forum.test/thread")
+
+    def test_official_profile_prioritizes_government_source(self):
+        sources = [
+            ("typhoon warning", OpenSerpSource("Community report", "https://forum.test/post", text="a" * 300, source_hint="community")),
+            ("typhoon warning", OpenSerpSource("Official warning", "https://weather.gov.test/warning", text="b" * 300, source_hint="government")),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3, source_profile="official")
+
+        self.assertEqual(selected[0].url, "https://weather.gov.test/warning")
+
+    def test_selection_diversifies_domains_before_repeated_pages(self):
+        sources = [
+            ("python release", OpenSerpSource("Python one", "https://python.test/one", text="a" * 300, cluster_score=3)),
+            ("python release", OpenSerpSource("Python two", "https://python.test/two", text="b" * 300, cluster_score=2)),
+            ("python release", OpenSerpSource("Independent Python", "https://independent.test/python", text="c" * 300, cluster_score=1)),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3)
+
+        self.assertEqual(
+            [source.url for source in selected],
+            ["https://python.test/one", "https://independent.test/python", "https://python.test/two"],
+        )
+
 
 class OpenSerpPlannerTests(unittest.IsolatedAsyncioTestCase):
     async def test_planner_limits_queries_and_returns_individual_citable_sources(self):
@@ -96,6 +130,19 @@ class OpenSerpPlannerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_planner_returns_no_reliable_content_when_only_one_untrusted_source_exists(self):
         response = OpenSerpResponse(sources=(OpenSerpSource("One", "https://one.test", text="one " * 100),))
+        planner = SearchPlanner(timeout_ms=1000, client=_Client({"q": response}))
+
+        results = await planner.search_many(["q"])
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].text)
+        self.assertIn("可靠來源不足", results[0].error)
+
+    async def test_planner_requires_two_distinct_domains_for_cross_checking(self):
+        response = OpenSerpResponse(sources=(
+            OpenSerpSource("One", "https://same.test/one", text="one " * 100),
+            OpenSerpSource("Two", "https://same.test/two", text="two " * 100),
+        ))
         planner = SearchPlanner(timeout_ms=1000, client=_Client({"q": response}))
 
         results = await planner.search_many(["q"])
