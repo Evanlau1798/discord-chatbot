@@ -40,6 +40,8 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("siteDomains", prompt)
         self.assertIn("desiredSources", prompt)
         self.assertIn("sourceProfile", prompt)
+        self.assertIn("Discord Markdown", prompt)
+        self.assertIn("[有意義的顯示文字](https://example.com)", prompt)
         self.assertIn("每個 query 都必須脫離目前對話後仍能單獨理解", prompt)
         self.assertIn("多個合理指涉對象", prompt)
 
@@ -79,6 +81,8 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("不要先輸出 replyText", instruction)
         self.assertIn("browser.searchQuery", instruction)
         self.assertIn("browser.youtubeSearchQuery", instruction)
+        self.assertIn("Discord Markdown", instruction)
+        self.assertIn("[有意義的顯示文字](https://example.com)", instruction)
 
     def test_repair_instruction_keeps_cross_language_media_search_rule(self):
         instruction = build_repair_instruction()

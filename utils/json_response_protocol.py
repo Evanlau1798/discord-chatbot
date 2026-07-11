@@ -96,6 +96,8 @@ def build_repair_instruction() -> str:
     parts = [
         "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
         f"格式固定為 {schema}。",
+        "replyText 內需要提供 URL 時，請使用 Discord Markdown 格式 [有意義的顯示文字](https://example.com)，"
+        "連結 URL 必須是實際來源，不要放在反引號中。",
     ]
     if image_generation_enabled:
         parts.append("不需要生圖時省略 imageGeneration；")

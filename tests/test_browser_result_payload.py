@@ -25,6 +25,8 @@ class BrowserResultPayloadTests(unittest.TestCase):
 
         self.assertIn("引用", payload["payload"]["instruction"])
         self.assertIn("finalUrl", payload["payload"]["instruction"])
+        self.assertIn("Discord Markdown", payload["payload"]["instruction"])
+        self.assertIn("[來源名稱](finalUrl)", payload["payload"]["instruction"])
 
     def test_filters_failed_results_when_readable_result_exists(self):
         payload = build_browser_followup_payload([

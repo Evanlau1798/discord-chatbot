@@ -11,7 +11,8 @@ RELIABLE_RESULT_INSTRUCTION_WITH_IMAGE_GENERATION = (
     "不要再次輸出 browser；必要時仍可輸出 imageGeneration 或 memory。"
     "若使用者要求找 YouTube 影片或影片連結，只有結果中出現 YouTube watch、youtu.be 或明確影片頁面時才算找到；"
     "如果只找到論壇、社群或討論串，請把它當作線索並說明尚未確認 direct video URL。"
-    "使用網路資料形成的事實必須在 replyText 以 Markdown 連結引用來源，而且只能引用 browserResults 的 finalUrl；不可捏造或改寫 URL。"
+    "使用網路資料形成的事實必須在 replyText 以 Discord Markdown 格式 [來源名稱](finalUrl) 引用來源，"
+    "而且只能引用 browserResults 的實際 finalUrl；不可捏造或改寫 URL，也不要把 URL 放在反引號中。"
     "不要提及已省略的搜尋失敗、CAPTCHA、反機器人驗證、工具錯誤或網站阻擋。"
 )
 RELIABLE_RESULT_INSTRUCTION = (
@@ -19,7 +20,8 @@ RELIABLE_RESULT_INSTRUCTION = (
     "不要再次輸出 browser；必要時仍可輸出 memory。"
     "若使用者要求找 YouTube 影片或影片連結，只有結果中出現 YouTube watch、youtu.be 或明確影片頁面時才算找到；"
     "如果只找到論壇、社群或討論串，請把它當作線索並說明尚未確認 direct video URL。"
-    "使用網路資料形成的事實必須在 replyText 以 Markdown 連結引用來源，而且只能引用 browserResults 的 finalUrl；不可捏造或改寫 URL。"
+    "使用網路資料形成的事實必須在 replyText 以 Discord Markdown 格式 [來源名稱](finalUrl) 引用來源，"
+    "而且只能引用 browserResults 的實際 finalUrl；不可捏造或改寫 URL，也不要把 URL 放在反引號中。"
     "不要提及已省略的搜尋失敗、CAPTCHA、反機器人驗證、工具錯誤或網站阻擋。"
 )
 NO_RELIABLE_RESULT_INSTRUCTION = (

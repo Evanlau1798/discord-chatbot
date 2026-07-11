@@ -100,6 +100,8 @@ def _json_output_rules(image_generation_enabled: bool) -> str:
     parts = [
         "你只能輸出單一 JSON 物件，不可輸出 Markdown、程式碼區塊、說明文字或前後綴。"
         "最終回覆時 replyText 必填，且是唯一會顯示給使用者的文字；只有輸出 browser 工具請求時可暫時省略 replyText。",
+        "replyText 會顯示在 Discord；需要提供 URL 時請使用 Discord Markdown 連結格式 [有意義的顯示文字](https://example.com)，"
+        "不要把 URL 放在反引號中，也不要使用無法辨識來源的『點這裡』作為顯示文字。",
     ]
     if image_generation_enabled:
         parts.append("需要生圖時才輸出 imageGeneration: {needed: true, prompt: ...}；不需要時省略整個區塊。")
