@@ -27,6 +27,8 @@ DEFAULT_TOTAL_CHARS = 36_000
 MIN_RELIABLE_SOURCES = 2
 _GLOBAL_SEARCH_LIMITER = threading.BoundedSemaphore(3)
 _TRACKING_PARAMETERS = {"fbclid", "gclid", "msclkid", "ref", "ref_src"}
+_UNSAFE_TLDS = {"adult", "porn", "sex", "sexy", "xxx"}
+_UNSAFE_HOST_TOKENS = {"hentai", "hqtube", "porn", "porno", "redtube", "xnxx", "xvideos", "xxx"}
 logger = logging.getLogger(__name__)
 
 
@@ -120,9 +122,11 @@ def select_reliable_sources(
     merged: dict[str, tuple[str, OpenSerpSource]] = {}
     for query, source in candidates:
         canonical = canonicalize_source_url(source.url)
-        if not canonical or not source.text.strip():
+        if not canonical or not source.text.strip() or _is_unsafe_source(canonical) or _is_query_conflict(query, canonical):
             continue
         normalized = replace(source, url=canonical)
+        if _relevance_score(query, normalized) == 0:
+            continue
         current = merged.get(canonical)
         if current is None or _source_score(query, normalized, site_domains) > _source_score(current[0], current[1], site_domains):
             merged[canonical] = (query, normalized)
@@ -173,12 +177,30 @@ def plan_search_queries_from_env(queries: list[str]) -> list[str]:
 def _source_score(query: str, source: OpenSerpSource, site_domains: tuple[str, ...]) -> tuple:
     hostname = (urlsplit(source.url).hostname or "").lower()
     official = any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
-    terms = {term for term in re.findall(r"[\w-]+", query.lower()) if len(term) > 1}
-    haystack = f"{source.title} {source.snippet} {source.domain}".lower()
-    relevance = sum(1 for term in terms if term in haystack)
+    relevance = _relevance_score(query, source)
     authority = source.source_hint.lower() in {"official", "government", "academic", "documentation"}
     rank = source.rank if source.rank > 0 else 10_000
     return official, authority, source.cluster_score, relevance, -rank
+
+
+def _relevance_score(query: str, source: OpenSerpSource) -> int:
+    raw_terms = re.findall(r"[\w-]+", query.lower())
+    query_terms = {
+        term
+        for term in raw_terms
+        if len(term) >= 3 or (len(term) >= 2 and any("\u4e00" <= char <= "\u9fff" for char in term))
+    }
+    if not query_terms:
+        return 1
+    haystack = f"{source.title} {source.snippet} {source.domain}".lower()
+    haystack_terms = set(re.findall(r"[a-z0-9_-]+", haystack))
+    score = 0
+    for term in query_terms:
+        if any("\u4e00" <= char <= "\u9fff" for char in term):
+            score += int(term in haystack)
+        else:
+            score += int(term in haystack_terms)
+    return score
 
 
 def _has_first_party_source(sources: list[OpenSerpSource], site_domains: tuple[str, ...]) -> bool:
@@ -186,6 +208,20 @@ def _has_first_party_source(sources: list[OpenSerpSource], site_domains: tuple[s
         return False
     hostname = (urlsplit(sources[0].url).hostname or "").lower()
     return any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
+
+
+def _is_unsafe_source(url: str) -> bool:
+    hostname = (urlsplit(url).hostname or "").lower()
+    labels = [label for label in hostname.split(".") if label]
+    if labels and labels[-1] in _UNSAFE_TLDS:
+        return True
+    tokens = {token for label in labels for token in re.split(r"[-_]", label) if token}
+    return bool(tokens & _UNSAFE_HOST_TOKENS)
+
+
+def _is_query_conflict(query: str, url: str) -> bool:
+    hostname = (urlsplit(url).hostname or "").lower()
+    return "-self" in hostname and "self" not in query.lower().split()
 
 
 def _browser_result(source: OpenSerpSource, queries: list[str]) -> BrowserFetchResult:

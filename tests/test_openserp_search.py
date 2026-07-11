@@ -31,9 +31,9 @@ class OpenSerpQualityTests(unittest.TestCase):
 
     def test_selection_deduplicates_and_prioritizes_explicit_site(self):
         sources = [
-            ("pricing", OpenSerpSource("Mirror", "https://blog.test/post", text="x" * 300, cluster_score=2.0)),
-            ("pricing", OpenSerpSource("Official", "https://openai.com/api/pricing", text="y" * 300, cluster_score=0.5)),
-            ("pricing", OpenSerpSource("Duplicate", "https://openai.com/api/pricing?utm_medium=x", text="z" * 300)),
+            ("pricing", OpenSerpSource("Pricing mirror", "https://blog.test/post", text="x" * 300, cluster_score=2.0)),
+            ("pricing", OpenSerpSource("Official pricing", "https://openai.com/api/pricing", text="y" * 300, cluster_score=0.5)),
+            ("pricing", OpenSerpSource("Pricing duplicate", "https://openai.com/api/pricing?utm_medium=x", text="z" * 300)),
         ]
         selected = select_reliable_sources(sources, desired_sources=3, site_domains=("openai.com",))
 
@@ -41,15 +41,40 @@ class OpenSerpQualityTests(unittest.TestCase):
 
     def test_selection_requires_extracted_content_and_clips_budgets(self):
         sources = [
-            ("query", OpenSerpSource("One", "https://one.test/a", text="a" * 20_000)),
+            ("query", OpenSerpSource("Query one", "https://one.test/a", text="a" * 20_000)),
             ("query", OpenSerpSource("No extraction", "https://two.test/b", snippet="snippet only")),
-            ("query", OpenSerpSource("Three", "https://three.test/c", text="c" * 20_000)),
-            ("query", OpenSerpSource("Four", "https://four.test/d", text="d" * 20_000)),
+            ("query", OpenSerpSource("Query three", "https://three.test/c", text="c" * 20_000)),
+            ("query", OpenSerpSource("Query four", "https://four.test/d", text="d" * 20_000)),
         ]
         selected = select_reliable_sources(sources, desired_sources=3, per_source_chars=10_000, total_chars=25_000)
 
         self.assertEqual([len(item.text) for item in selected], [10_000, 10_000, 5_000])
         self.assertNotIn("https://two.test/b", [item.url for item in selected])
+
+    def test_selection_rejects_adult_and_unsafe_domains(self):
+        sources = [
+            ("discord.py changelog", OpenSerpSource("Changelog", "https://discordpy.readthedocs.io/change_log.html", text="a" * 300)),
+            ("discord.py changelog", OpenSerpSource("Unrelated", "https://hqtube.xxx/discord", text="b" * 300, cluster_score=9)),
+            ("discord.py changelog", OpenSerpSource("Best restaurants", "https://tasteatlas.com/copycat", text="d" * 300, cluster_score=8)),
+            ("discord.py changelog", OpenSerpSource("Self fork changelog", "https://discordpy-self.readthedocs.io/en/latest/changelog", text="e" * 300)),
+            ("discord.py changelog", OpenSerpSource("discord.py Release", "https://github.com/Rapptz/discord.py/releases", text="c" * 300)),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3)
+
+        self.assertEqual(
+            [item.url for item in selected],
+            ["https://discordpy.readthedocs.io/change_log.html", "https://github.com/Rapptz/discord.py/releases"],
+        )
+
+    def test_selection_keeps_self_fork_when_query_explicitly_requests_it(self):
+        sources = [
+            ("discord.py self changelog", OpenSerpSource("Self fork changelog", "https://discordpy-self.readthedocs.io/changelog", text="e" * 300)),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3)
+
+        self.assertEqual(len(selected), 1)
 
 
 class OpenSerpPlannerTests(unittest.IsolatedAsyncioTestCase):
