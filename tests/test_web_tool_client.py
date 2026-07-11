@@ -33,9 +33,11 @@ class FakeSearchPlanner:
     ):
         self.search_results = search_results or []
         self.received_queries = []
+        self.received_options = None
 
-    async def search_many(self, queries: list[str]):
+    async def search_many(self, queries: list[str], *, options=None):
         self.received_queries = queries
+        self.received_options = options
         return self.search_results
 
 
@@ -54,6 +56,17 @@ class FakeCooldownQueue:
 
 
 class WebToolClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_forwards_structured_options_to_planner(self):
+        from utils.openserp_search import SearchOptions
+
+        planner = FakeSearchPlanner()
+        client = WebToolClient(timeout_ms=1000, search_planner=planner)
+        options = SearchOptions(language="en", region="US", site_domains=("openai.com",), desired_sources=5)
+
+        await client.fetch_urls_and_searches([], ["OpenAI pricing"], search_options=options)
+
+        self.assertEqual(planner.received_options, options)
+
     async def test_url_open_uses_http_first_without_browser(self):
         browser_client = FakeBrowserClient()
 

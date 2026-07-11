@@ -104,10 +104,11 @@ def _json_output_rules(image_generation_enabled: bool) -> str:
     if image_generation_enabled:
         parts.append("需要生圖時才輸出 imageGeneration: {needed: true, prompt: ...}；不需要時省略整個區塊。")
     parts.extend([
-        "需要上網查詢最新資料、一般網路資訊或未提供 URL 的資料時，優先輸出 browser: {searchQuery: ...} 或 {searchQueries: [...]}；此時可省略 replyText。"
+        "需要上網查詢最新資料、一般網路資訊或未提供 URL 的資料時，優先輸出 browser: {search: {queries: [...], language: zh-TW, region: TW, timeRange: ..., siteDomains: [...], desiredSources: 3}}；"
+        "language、region、timeRange、siteDomains 只在能從需求確定時填寫，desiredSources 限 3 到 5；舊格式 searchQuery/searchQueries 仍可使用。此時可省略 replyText。"
         "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser: {youtubeSearchQuery: ...}；此時可省略 replyText。"
         "如果使用者內容需要網頁搜尋或最新資料，第一輪不要先輸出 replyText、不要用人設語氣鋪陳，"
-        "直接輸出 browser.searchQuery、browser.searchQueries 或 browser.youtubeSearchQuery 的精簡查詢關鍵字；收到 browserResults 後才依人設輸出最終 replyText。",
+        "直接輸出 browser.search.queries、browser.searchQuery、browser.searchQueries 或 browser.youtubeSearchQuery 的精簡查詢關鍵字；收到 browserResults 後才依人設輸出最終 replyText。",
         _search_query_rules(),
         "只有使用者明確提供 URL、網址或要求查看指定網頁時，才使用 browser: {link: url} 或 {links: [url1, url2]}。"
         "如果 payload.prefetchedBrowserContext 已包含使用者明確 URL 的可讀網頁附件，優先直接根據該內容回答；"

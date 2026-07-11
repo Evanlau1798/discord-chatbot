@@ -37,6 +37,8 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("不要先輸出 replyText", prompt)
         self.assertIn("browser.searchQuery", prompt)
         self.assertIn("browser.youtubeSearchQuery", prompt)
+        self.assertIn("siteDomains", prompt)
+        self.assertIn("desiredSources", prompt)
 
     def test_system_prompt_requires_cross_language_media_search_queries(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})

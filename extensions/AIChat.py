@@ -158,6 +158,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
                     parsed.browser.youtube_search_queries,
                     parsed.browser.find_requests,
                     parsed.browser.include_images,
+                    parsed.browser.search_options,
                     message,
                     cached_content,
                 )
@@ -231,6 +232,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
         youtube_search_queries: list[str],
         find_requests: list,
         include_images: bool,
+        search_options,
         message: discord.Message,
         cached_content: str | None,
     ):
@@ -244,6 +246,7 @@ class AiChat(AiChatContextMixin, commands.Cog):
             logger,
             include_images,
             youtube_search_queries=youtube_search_queries,
+            search_options=search_options,
         )
         await self._set_browser_reading_notice(browser_notice, browser_notice_sent_at)
         followup_messages = request_messages + [

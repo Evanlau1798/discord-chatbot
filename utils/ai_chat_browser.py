@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from utils.browser_client import BrowserToolError
 from utils.browser_result_types import BrowserFetchResult
-from utils.browser_search import plan_search_queries_from_env
+from utils.openserp_search import SearchOptions, plan_search_queries_from_env
 from utils.youtube_search_reader import plan_youtube_search_queries_from_env
 
 
@@ -14,6 +14,7 @@ async def fetch_browser_results(
     logger,
     include_images: bool = False,
     youtube_search_queries: list[str] | None = None,
+    search_options: SearchOptions | None = None,
 ):
     try:
         return await browser_client.fetch_urls_and_searches(
@@ -22,6 +23,7 @@ async def fetch_browser_results(
             find_requests,
             include_images=include_images,
             youtube_search_queries=youtube_search_queries or [],
+            search_options=search_options,
         )
     except BrowserToolError as exc:
         logger.warning("ai_chat.browser_tool_failed error=%s", exc)

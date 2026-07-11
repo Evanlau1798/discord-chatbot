@@ -6,6 +6,29 @@ from utils.json_response_protocol import BrowserFindRequest, ImageUnderstandingB
 
 
 class JsonResponseProtocolBrowserTests(unittest.TestCase):
+    def test_structured_openserp_search_options_are_parsed(self):
+        parsed = parse_model_response(
+            """
+            {"browser":{"search":{"queries":["OpenAI pricing","OpenAI API cost"],
+            "language":"en","region":"US","timeRange":"month",
+            "siteDomains":["openai.com"],"desiredSources":5}}}
+            """
+        )
+
+        self.assertEqual(parsed.browser.search_queries, ["OpenAI pricing", "OpenAI API cost"])
+        self.assertEqual(parsed.browser.search_options.language, "en")
+        self.assertEqual(parsed.browser.search_options.region, "US")
+        self.assertEqual(parsed.browser.search_options.time_range, "month")
+        self.assertEqual(parsed.browser.search_options.site_domains, ("openai.com",))
+        self.assertEqual(parsed.browser.search_options.desired_sources, 5)
+
+    def test_legacy_search_query_uses_safe_defaults(self):
+        parsed = parse_model_response('{"browser":{"searchQuery":"台北 天氣"}}')
+
+        self.assertEqual(parsed.browser.search_queries, ["台北 天氣"])
+        self.assertEqual(parsed.browser.search_options.language, "zh-TW")
+        self.assertEqual(parsed.browser.search_options.desired_sources, 3)
+
     def test_browser_youtube_search_query_is_parsed(self):
         parsed = parse_model_response(
             '{"browser":{"youtubeSearchQuery":"Apex Hal eating microphone"}}'

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from utils.imagine_config import is_image_generation_enabled
+from utils.openserp_search import SearchOptions
 
 CODE_BLOCK_PATTERN = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 FALLBACK_REPLY = "回覆格式不合法，這次無法正確處理模型回應。"
@@ -43,6 +44,7 @@ class BrowserBlock:
     youtube_search_queries: list[str]
     find_requests: list[BrowserFindRequest]
     include_images: bool = False
+    search_options: SearchOptions = SearchOptions()
 
     @property
     def targets(self) -> list[str]:
@@ -81,7 +83,7 @@ def build_repair_instruction() -> str:
     schema = '{"replyText":"..."'
     if image_generation_enabled:
         schema += ',"imageGeneration":{"needed":true,"prompt":"..."}'
-    schema += ',"memory":{"update":true,"content":"..."},"browser":{"searchQuery":"...","youtubeSearchQuery":"..."}}'
+    schema += ',"memory":{"update":true,"content":"..."},"browser":{"search":{"queries":["..."],"language":"zh-TW","region":"TW","desiredSources":3},"youtubeSearchQuery":"..."}}'
     parts = [
         "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
         f"格式固定為 {schema}。",
@@ -95,7 +97,7 @@ def build_repair_instruction() -> str:
     if image_generation_enabled:
         parts.append("除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。")
     parts.extend([
-        "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.searchQuery 的精簡查詢關鍵字；"
+        "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.search.queries 的精簡查詢關鍵字；可選擇提供 language、region、timeRange、siteDomains 與 3 到 5 的 desiredSources；"
         "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser.youtubeSearchQuery；"
         "收到 browserResults 後才輸出具有人設語氣的 replyText。"
         "若前一輪需要搜尋海外人物、遊戲、實況主、影片、梗圖或片段，請使用英文別名、常見英文說法與最多三個查詢關鍵字，"
@@ -178,6 +180,7 @@ def _parse_browser(value) -> BrowserBlock | None:
     youtube_search_queries = _collect_browser_youtube_search_queries(value)
     find_requests = _collect_browser_find_requests(value)
     include_images = _optional_bool(value.get("includeImages", False), "browser.includeImages")
+    search_options = _parse_search_options(value.get("search"))
     if not urls and not search_queries and not youtube_search_queries and not find_requests:
         return None
     return BrowserBlock(
@@ -186,6 +189,7 @@ def _parse_browser(value) -> BrowserBlock | None:
         youtube_search_queries=youtube_search_queries[:3],
         find_requests=find_requests[:5],
         include_images=include_images,
+        search_options=search_options,
     )
 
 
@@ -211,6 +215,14 @@ def _collect_browser_urls(value: dict) -> list[str]:
 
 def _collect_browser_search_queries(value: dict) -> list[str]:
     raw_values = []
+    search = value.get("search")
+    if isinstance(search, dict):
+        nested = search.get("queries")
+        if isinstance(nested, list):
+            raw_values.extend(nested)
+        nested_query = search.get("query")
+        if isinstance(nested_query, str):
+            raw_values.append(nested_query)
     for key in ("searchQueries", "queries"):
         item = value.get(key)
         if isinstance(item, list):
@@ -227,6 +239,32 @@ def _collect_browser_search_queries(value: dict) -> list[str]:
         if normalized and normalized not in queries:
             queries.append(normalized)
     return queries
+
+
+def _parse_search_options(value) -> SearchOptions:
+    if value is None:
+        return SearchOptions()
+    if not isinstance(value, dict):
+        raise ValueError("browser.search must be an object")
+    language = _optional_text(value.get("language")) or "zh-TW"
+    region = _optional_text(value.get("region"))
+    time_range = _optional_text(value.get("timeRange"))
+    raw_domains = value.get("siteDomains", [])
+    if isinstance(raw_domains, str):
+        raw_domains = [raw_domains]
+    if not isinstance(raw_domains, list) or any(not isinstance(item, str) for item in raw_domains):
+        raise ValueError("browser.search.siteDomains must contain strings")
+    domains = tuple(dict.fromkeys(item.strip().lower() for item in raw_domains if item.strip()))[:3]
+    desired = value.get("desiredSources", 3)
+    if not isinstance(desired, int) or isinstance(desired, bool):
+        raise ValueError("browser.search.desiredSources must be an integer")
+    return SearchOptions(
+        language=language[:20],
+        region=region[:10],
+        time_range=time_range[:20],
+        site_domains=domains,
+        desired_sources=min(max(desired, 3), 5),
+    )
 
 
 def _collect_browser_youtube_search_queries(value: dict) -> list[str]:

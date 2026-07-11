@@ -12,6 +12,20 @@ from utils.browser_result_payload import (
 
 
 class BrowserResultPayloadTests(unittest.TestCase):
+    def test_followup_requires_citations_from_returned_urls(self):
+        result = BrowserFetchResult(
+            requested_url="query",
+            source_type="search",
+            final_url="https://example.test/source",
+            title="Source",
+            text="Reliable source content",
+        )
+
+        payload = build_browser_followup_payload([result])
+
+        self.assertIn("引用", payload["payload"]["instruction"])
+        self.assertIn("finalUrl", payload["payload"]["instruction"])
+
     def test_filters_failed_results_when_readable_result_exists(self):
         payload = build_browser_followup_payload([
             BrowserFetchResult(

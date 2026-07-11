@@ -10,7 +10,7 @@ from utils.browser_client import (
     _build_http_fallback_result,
 )
 from utils.browser_result_types import BrowserFetchResult
-from utils.browser_search import SearchPlanner
+from utils.openserp_search import SearchOptions, SearchPlanner
 from utils.http_page_fetcher import HttpPageText, fetch_http_page_text
 from utils.json_response_protocol import BrowserFindRequest
 from utils.url_readers import read_special_url
@@ -58,9 +58,10 @@ class WebToolClient:
         find_requests: list[BrowserFindRequest] | None = None,
         include_images: bool = False,
         youtube_search_queries: list[str] | None = None,
+        search_options: SearchOptions | None = None,
     ) -> list[BrowserFetchResult]:
         youtube_results = await self._fetch_youtube_searches(youtube_search_queries or [])
-        search_results = await self.search_planner.search_many(search_queries)
+        search_results = await self.search_planner.search_many(search_queries, options=search_options)
         explicit_url_targets = [build_url_target(url) for url in urls if str(url or "").strip()]
         targets = dedupe_targets(explicit_url_targets)
         http_results, browser_targets = await self._fetch_http_first_targets(targets, include_images)
