@@ -70,6 +70,6 @@ fi
   --env OPENSERP_RESILIENCE_MAX_RETRIES=0 \
   --env OPENSERP_GOOGLE_RATE_REQUESTS=60 \
   --env OPENSERP_GOOGLE_RATE_BURST=1 \
-  "${IMAGE_NAME}" >/dev/null
+  "${IMAGE_NAME}" serve >/dev/null
 
 wait_ready

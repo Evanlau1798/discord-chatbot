@@ -18,6 +18,7 @@ class OpenSerpScriptTests(unittest.TestCase):
         self.assertIn("OPENSERP_RESILIENCE_MAX_RETRIES=0", text)
         self.assertIn("OPENSERP_GOOGLE_RATE_REQUESTS=60", text)
         self.assertIn("OPENSERP_GOOGLE_RATE_BURST=1", text)
+        self.assertIn('"${IMAGE_NAME}" serve', text)
 
     def test_stop_script_targets_only_project_container(self):
         text = (ROOT / "stop_openserp.sh").read_text(encoding="utf-8")
