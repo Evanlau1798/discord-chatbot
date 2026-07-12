@@ -100,7 +100,7 @@ class AiChatMessageHandlerConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         active = 0
         max_seen = 0
 
-        async def fake_chat(*, message, dialogue, is_dm):
+        async def fake_chat(*, message, dialogue, is_dm, request_status):
             nonlocal active, max_seen
             active += 1
             max_seen = max(max_seen, active)
@@ -129,7 +129,7 @@ class AiChatMessageHandlerConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         release_events = {index: asyncio.Event() for index in range(3)}
         started_events = {index: asyncio.Event() for index in range(3)}
 
-        async def fake_chat(*, message, dialogue, is_dm):
+        async def fake_chat(*, message, dialogue, is_dm, request_status):
             started_events[message.id].set()
             await release_events[message.id].wait()
             return {
@@ -172,7 +172,7 @@ class AiChatMessageHandlerConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         cog.request_limiter = AiChatRequestLimiter(max_parallel_requests=1)
         received = []
 
-        async def fake_chat(*, message, dialogue, is_dm):
+        async def fake_chat(*, message, dialogue, is_dm, request_status):
             received.append((message.id, dialogue, is_dm))
             return {
                 "reply_text": "ok-sticker",
