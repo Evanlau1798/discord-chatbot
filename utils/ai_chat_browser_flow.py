@@ -23,6 +23,7 @@ class AiChatBrowserFlowMixin:
         search_options,
         message,
         cached_content: str | None,
+        request_status=None,
     ):
         browser_notice = await self._send_browser_notice(
             message, urls, search_queries, youtube_search_queries, find_requests
@@ -37,7 +38,9 @@ class AiChatBrowserFlowMixin:
             {"role": "assistant", "content": raw_response},
             {"role": "user", "content": build_browser_followup_content(browser_results, allow_search_retry=retry_allowed)},
         ]
-        parsed, fallback_raw = await self._complete_and_parse_with_raw(followup_messages, message, cached_content)
+        parsed, fallback_raw = await self._complete_and_parse_with_raw(
+            followup_messages, message, cached_content, request_status
+        )
         if parsed.browser is None:
             return parsed, browser_notice
         fallback_queries = self._valid_fallback_queries(parsed.browser, search_queries) if retry_allowed else []
@@ -50,7 +53,7 @@ class AiChatBrowserFlowMixin:
             {"role": "assistant", "content": fallback_raw},
             {"role": "user", "content": build_browser_followup_content(fallback_results, allow_search_retry=False)},
         ]
-        final, _ = await self._complete_and_parse_with_raw(final_messages, message, cached_content)
+        final, _ = await self._complete_and_parse_with_raw(final_messages, message, cached_content, request_status)
         return (build_search_failure_response() if final.browser is not None else final), browser_notice
 
     async def _fetch_browser_round(

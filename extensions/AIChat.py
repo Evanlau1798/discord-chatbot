@@ -21,7 +21,8 @@ from utils.ai_imagine_client import ImagineAPIError, ImagineClient
 from utils.discord_notice_timing import MIN_BROWSER_NOTICE_DISPLAY_SECONDS, wait_for_min_notice_display
 from utils.discord_files import send_content_with_files
 from utils.discord_presence import keep_typing
-from utils.discord_status_notice import delete_notice, edit_notice, format_queue_notice_content, upsert_reply_notice
+from utils.discord_request_status import DiscordRequestStatus
+from utils.discord_status_notice import delete_notice, edit_notice, format_queue_notice_content
 from utils.gemini_api import DEFAULT_GEMINI_MODEL, GeminiChatClient, _is_retryable_api_error
 from utils.image_context_cache import ImageContextCache
 from utils.imagine_config import get_imagine_base_url, is_image_generation_enabled
@@ -73,23 +74,22 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
         text = self._extract_dialogue_text(message, is_dm=is_dm)
         if not text and not message.attachments and not getattr(message, "embeds", []) and not getattr(message, "stickers", []):
             return
-        queue_notice = None
+        request_status = DiscordRequestStatus(message, logger)
 
         async def on_queue_update(update):
-            nonlocal queue_notice
-            queue_notice = await upsert_reply_notice(
-                message,
-                queue_notice,
-                format_queue_notice_content(update, LOADING_EMOJI),
-                logger,
-            )
+            await request_status.set_base(format_queue_notice_content(update, LOADING_EMOJI))
 
         async with keep_typing(message.channel):
             async with self.request_limiter.with_queue_updates(on_queue_update):
                 try:
-                    result = await self.chat(message=message, dialogue=text, is_dm=is_dm)
+                    result = await self.chat(
+                        message=message,
+                        dialogue=text,
+                        is_dm=is_dm,
+                        request_status=request_status,
+                    )
                     if result.get("delivered_message") is not None:
-                        await delete_notice(queue_notice, logger)
+                        await delete_notice(request_status.notice, logger)
                         if result["image_paths"]:
                             image_sender = (
                                 (lambda content, files: message.channel.send(content=content or None, files=files))
@@ -108,14 +108,14 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                             result["reply_text"],
                             result["image_paths"],
                         )
-                        await delete_notice(queue_notice, logger)
+                        await delete_notice(request_status.notice, logger)
                         return
-                    if await edit_notice(queue_notice, result["reply_text"], logger):
+                    if await edit_notice(request_status.notice, result["reply_text"], logger):
                         return
                     await message.reply(content=result["reply_text"], mention_author=False)
                 except Exception as exc:
                     logger.exception("ai_chat.message_failed")
-                    await delete_notice(queue_notice, logger)
+                    await delete_notice(request_status.notice, logger)
                     await message.reply(
                         embed=SakuraEmbedMsg(
                             title="訊息無法傳送",
@@ -124,7 +124,14 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                         mention_author=False,
                     )
 
-    async def chat(self, *, message: discord.Message, dialogue: str, is_dm: bool) -> dict:
+    async def chat(
+        self,
+        *,
+        message: discord.Message,
+        dialogue: str,
+        is_dm: bool,
+        request_status: DiscordRequestStatus | None = None,
+    ) -> dict:
         async with USER_CHAT_LOCKS[message.author.id]:
             history = self.get_user_history(message.author.id) if is_dm else []
             if sum(1 for item in history if item.get("role") == "assistant") >= MAX_CHAT_TURNS:
@@ -145,7 +152,9 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
             )
             request_messages = await self._build_request_messages(message, dialogue, history, persona, memory, server_history)
             cached_content = self.persona_cache_names.get(persona.key) if persona is not None else None
-            parsed, raw_response = await self._complete_and_parse_with_raw(request_messages, message, cached_content)
+            parsed, raw_response = await self._complete_and_parse_with_raw(
+                request_messages, message, cached_content, request_status
+            )
             browser_notice = None
             browser_used = False
             if parsed.browser is not None:
@@ -161,6 +170,7 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                     parsed.browser.search_options,
                     message,
                     cached_content,
+                    request_status,
                 )
             image_status_message = None
             image_rate_limited_until = None
@@ -203,12 +213,24 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                 "browser_used": browser_used,
             }
 
-    async def _complete_and_parse(self, messages: list[dict], message: discord.Message, cached_content: str | None):
-        parsed, _ = await self._complete_and_parse_with_raw(messages, message, cached_content)
+    async def _complete_and_parse(
+        self,
+        messages: list[dict],
+        message: discord.Message,
+        cached_content: str | None,
+        request_status: DiscordRequestStatus | None = None,
+    ):
+        parsed, _ = await self._complete_and_parse_with_raw(messages, message, cached_content, request_status)
         return parsed
 
-    async def _complete_and_parse_with_raw(self, messages: list[dict], message: discord.Message, cached_content: str | None):
-        response = await self._complete_with_retry(messages, message, cached_content)
+    async def _complete_and_parse_with_raw(
+        self,
+        messages: list[dict],
+        message: discord.Message,
+        cached_content: str | None,
+        request_status: DiscordRequestStatus | None = None,
+    ):
+        response = await self._complete_with_retry(messages, message, cached_content, request_status)
         try:
             return parse_model_response(response.visible_content), response.visible_content
         except ValueError:
@@ -216,7 +238,7 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                 {"role": "assistant", "content": response.visible_content},
                 {"role": "user", "content": build_repair_instruction()},
             ]
-            repair_response = await self._complete_with_retry(repair_messages, message, cached_content)
+            repair_response = await self._complete_with_retry(repair_messages, message, cached_content, request_status)
             try:
                 return parse_model_response(repair_response.visible_content), repair_response.visible_content
             except ValueError:
@@ -226,8 +248,14 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                 )
                 return build_fallback_response(), repair_response.visible_content
 
-    async def _complete_with_retry(self, messages: list[dict], message: discord.Message, cached_content: str | None):
-        retry_notice = None
+    async def _complete_with_retry(
+        self,
+        messages: list[dict],
+        message: discord.Message,
+        cached_content: str | None,
+        request_status: DiscordRequestStatus | None = None,
+    ):
+        status = request_status or DiscordRequestStatus(message, logger)
         try:
             for attempt_index in range(len(GENAI_RETRY_DELAYS) + 1):
                 try:
@@ -251,35 +279,16 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                         type(exc).__name__,
                         exc,
                     )
-                    retry_notice = await self._upsert_retry_notice(message, retry_notice, retry_number, delay_seconds)
+                    if retry_number >= 3:
+                        retry_content = (
+                            f"-# {LOADING_EMOJI} GenAI 服務暫時不穩，正在重試 "
+                            f"({retry_number}/{len(GENAI_RETRY_DELAYS)})，下一次嘗試約 {delay_seconds} 秒後。"
+                        )
+                        await status.set_retry(retry_content)
                     await asyncio.sleep(delay_seconds)
         finally:
-            if retry_notice is not None:
-                try:
-                    await retry_notice.delete()
-                except discord.HTTPException:
-                    logger.debug("ai_chat.retry_notice_delete_failed", exc_info=True)
+            await status.clear_retry()
         raise RuntimeError("模型服務目前忙碌或暫時不可用，請稍後再試一次。")
-
-    async def _upsert_retry_notice(
-        self,
-        message: discord.Message,
-        retry_notice: discord.Message | None,
-        retry_number: int,
-        delay_seconds: int,
-    ) -> discord.Message | None:
-        content = (
-            f"{LOADING_EMOJI} GenAI 服務暫時不穩，正在重試 "
-            f"({retry_number}/{len(GENAI_RETRY_DELAYS)})，下一次嘗試約 {delay_seconds} 秒後。"
-        )
-        try:
-            if retry_notice is None:
-                return await message.reply(content=content, mention_author=False)
-            await retry_notice.edit(content=content)
-            return retry_notice
-        except discord.HTTPException:
-            logger.debug("ai_chat.retry_notice_send_failed", exc_info=True)
-            return retry_notice
 
     async def _send_browser_notice(
         self,
