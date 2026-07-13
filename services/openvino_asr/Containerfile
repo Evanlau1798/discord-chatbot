@@ -13,6 +13,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY services /app/services
+RUN chmod -R a+rX /app/services
 
 ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
