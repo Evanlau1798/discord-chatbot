@@ -8,16 +8,25 @@ from utils.message_media import (
     collect_message_image_urls,
     collect_message_media,
     collect_message_source_urls,
+    message_has_video_attachment,
 )
 
 
 class FakeAttachment:
-    def __init__(self, url: str, content_type: str = "", filename: str = "", data: bytes = b"image"):
+    def __init__(
+        self,
+        url: str,
+        content_type: str = "",
+        filename: str = "",
+        data: bytes = b"image",
+        duration_secs: float | None = None,
+    ):
         self.url = url
         self.content_type = content_type
         self.filename = filename
         self.size = len(data)
         self.data = data
+        self.duration_secs = duration_secs
         self.read_use_cached = None
 
     async def read(self, *, use_cached=False):
@@ -26,10 +35,11 @@ class FakeAttachment:
 
 
 class FakeMessage:
-    def __init__(self, attachments=None, embeds=None, stickers=None):
+    def __init__(self, attachments=None, embeds=None, stickers=None, *, is_voice_message=False):
         self.attachments = attachments or []
         self.embeds = embeds or []
         self.stickers = stickers or []
+        self.flags = type("Flags", (), {"is_voice_message": is_voice_message})()
 
 
 class FakeStickerFormat:
@@ -59,6 +69,27 @@ class FakeEmbed:
 
 
 class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
+    def test_detects_video_attachment_by_mime_type(self):
+        message = FakeMessage([
+            FakeAttachment("https://cdn.discordapp.com/attachments/123", "video/mp4", "upload"),
+        ])
+
+        self.assertTrue(message_has_video_attachment(message))
+
+    def test_detects_video_attachment_by_extension(self):
+        message = FakeMessage([
+            FakeAttachment("https://cdn.discordapp.com/attachments/clip.webm", "", "clip.webm"),
+        ])
+
+        self.assertTrue(message_has_video_attachment(message))
+
+    def test_does_not_treat_audio_attachment_as_video(self):
+        message = FakeMessage([
+            FakeAttachment("https://cdn.discordapp.com/attachments/voice.ogg", "audio/ogg", "voice.ogg"),
+        ])
+
+        self.assertFalse(message_has_video_attachment(message))
+
     def test_collects_direct_image_url_from_dialogue(self):
         urls = collect_message_image_urls(
             FakeMessage(),
@@ -178,6 +209,48 @@ class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.content_parts[0]["video_bytes"]["mime_type"], "video/mp4")
         self.assertEqual(media.content_parts[0]["video_bytes"]["filename"], "video.mp4")
         self.assertTrue(attachment.read_use_cached)
+
+    async def test_voice_message_attachment_is_collected_as_audio(self):
+        attachment = FakeAttachment(
+            "https://cdn.discordapp.com/attachments/voice.ogg",
+            "audio/ogg",
+            "voice-message.ogg",
+            data=b"ogg-bytes",
+            duration_secs=12.5,
+        )
+
+        media = await collect_message_media(FakeMessage([attachment], is_voice_message=True), "")
+
+        payload = media.content_parts[0]["audio_bytes"]
+        self.assertEqual(media.content_parts[0]["type"], "audio_bytes")
+        self.assertEqual(payload["data"], b"ogg-bytes")
+        self.assertEqual(payload["duration_seconds"], 12.5)
+        self.assertTrue(payload["is_voice_message"])
+
+    async def test_audio_webm_is_not_misclassified_as_video(self):
+        attachment = FakeAttachment(
+            "https://cdn.discordapp.com/attachments/voice.webm",
+            "audio/webm",
+            "voice.webm",
+            data=b"webm-audio",
+        )
+
+        media = await collect_message_media(FakeMessage([attachment]), "")
+
+        self.assertEqual([part["type"] for part in media.content_parts], ["audio_bytes"])
+
+    async def test_voice_flag_takes_priority_over_video_extension(self):
+        attachment = FakeAttachment(
+            "https://cdn.discordapp.com/attachments/voice.mp4",
+            "",
+            "voice.mp4",
+            data=b"audio-in-mp4",
+        )
+
+        media = await collect_message_media(FakeMessage([attachment], is_voice_message=True), "")
+
+        self.assertEqual([part["type"] for part in media.content_parts], ["audio_bytes"])
+        self.assertTrue(media.content_parts[0]["audio_bytes"]["is_voice_message"])
 
     async def test_oversized_video_attachment_is_not_read(self):
         attachment = FakeAttachment(

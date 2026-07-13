@@ -1,0 +1,26 @@
+FROM docker.io/openvino/ubuntu24_runtime@sha256:3eab9bc3f643e27526f347dd6fba15e95eee2c07257570bf988314dd37301aa0
+
+USER root
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m pip install --no-cache-dir \
+        openvino-genai==2026.2.1.0 \
+        huggingface-hub==0.36.0 \
+    && mkdir -p /var/lib/openvino-asr/models /var/lib/openvino-asr/cache \
+    && chown -R openvino:openvino /var/lib/openvino-asr
+
+WORKDIR /app
+COPY services /app/services
+RUN chmod -R a+rX /app/services
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    LOCAL_ASR_MODEL_DIR=/var/lib/openvino-asr/models/whisper-small-fp16-ov \
+    LOCAL_ASR_CACHE_DIR=/var/lib/openvino-asr/cache
+
+USER openvino
+EXPOSE 18765
+
+CMD ["python3", "-m", "services.openvino_asr.app"]

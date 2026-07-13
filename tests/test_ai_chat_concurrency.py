@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from extensions import AIChat as ai_chat_module
-from extensions.AIChat import AiChat
+from extensions.AIChat import AiChat, VIDEO_PROCESSING_STATUS
 from utils.ai_chat_concurrency import (
     DEFAULT_AI_CHAT_MAX_PARALLEL_REQUESTS,
     AiChatRequestLimiter,
@@ -93,6 +93,36 @@ class AiChatRequestLimiterTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AiChatMessageHandlerConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_on_message_shows_video_processing_status_before_chat(self):
+        cog = AiChat.__new__(AiChat)
+        cog.bot = type("Bot", (), {"user": None})()
+        cog.request_limiter = AiChatRequestLimiter(max_parallel_requests=1)
+        observed_status = []
+
+        async def fake_chat(*, message, dialogue, is_dm, request_status):
+            observed_status.append(request_status.notice.content)
+            return {
+                "reply_text": "video-ready",
+                "image_paths": [],
+                "delivered_message": None,
+                "browser_used": False,
+            }
+
+        cog.chat = fake_chat
+        attachment = type(
+            "Attachment",
+            (),
+            {"content_type": "video/mp4", "filename": "clip.mp4", "url": "https://cdn.discordapp.com/clip.mp4"},
+        )()
+        message = _FakeMessage(99, attachments=[attachment])
+
+        with patch.object(ai_chat_module.discord, "DMChannel", _FakeDMChannel):
+            await cog.on_message(message)
+
+        self.assertEqual(observed_status, [VIDEO_PROCESSING_STATUS])
+        self.assertEqual(len(message.replies), 1)
+        self.assertEqual(message.replies[0].content, "video-ready")
+
     async def test_on_message_uses_request_limiter(self):
         cog = AiChat.__new__(AiChat)
         cog.bot = type("Bot", (), {"user": None})()
@@ -196,10 +226,10 @@ class _FakeDMChannel:
 
 
 class _FakeMessage:
-    def __init__(self, message_id: int, *, content: str = "hello", stickers=None):
+    def __init__(self, message_id: int, *, content: str = "hello", attachments=None, stickers=None):
         self.id = message_id
         self.content = content
-        self.attachments = []
+        self.attachments = attachments or []
         self.embeds = []
         self.stickers = stickers or []
         self.mentions = []

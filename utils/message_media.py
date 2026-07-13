@@ -1,23 +1,33 @@
 from __future__ import annotations
 
 import asyncio
-import mimetypes
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ipaddress import ip_address
 from urllib.parse import urljoin, urlparse
 
 import requests
 
+from utils.discord_media_attachments import (
+    IMAGE_EXTENSIONS,
+    attachment_duration_seconds,
+    attachment_mime_type,
+    iter_audio_attachments,
+    iter_image_attachments,
+    iter_video_attachments,
+    message_has_video_attachment,
+    message_is_voice_message,
+    read_attachment_bytes,
+)
+
 MAX_IMAGE_URLS = 5
 MAX_IMAGE_URL_LENGTH = 2000
 MAX_ATTACHMENT_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_ATTACHMENT_VIDEO_BYTES = 50 * 1024 * 1024
+MAX_ATTACHMENT_AUDIO_BYTES = 50 * 1024 * 1024
 MAX_MEDIA_PAGE_BYTES = 512 * 1024
 IMAGE_URL_PATTERN = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
 CUSTOM_EMOJI_PATTERN = re.compile(r"<(?P<animated>a?):(?P<name>[A-Za-z0-9_]{1,64}):(?P<id>\d{15,25})>")
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif")
-VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm", ".m4v")
 IMAGE_PUNCTUATION = ".,;:!?)]}'\""
 SUPPORTED_MEDIA_PAGE_HOSTS = {"tenor.com", "www.tenor.com", "giphy.com", "www.giphy.com"}
 DISCORD_EMOJI_CDN_BASE = "https://cdn.discordapp.com/emojis"
@@ -30,6 +40,7 @@ JSON_IMAGE_URL_PATTERN = re.compile(r'"(?:contentUrl|thumbnailUrl)"\s*:\s*"([^"]
 class MessageMedia:
     image_urls: list[str]
     content_parts: list[dict]
+    diagnostics: list[dict] = field(default_factory=list)
 
 
 def collect_message_image_urls(message, dialogue: str, limit: int = MAX_IMAGE_URLS) -> list[str]:
@@ -72,34 +83,50 @@ def collect_message_source_urls(message, dialogue: str, limit: int = MAX_IMAGE_U
 async def collect_message_media(message, dialogue: str, limit: int = MAX_IMAGE_URLS) -> MessageMedia:
     image_urls = []
     content_parts = []
-    for attachment in _iter_image_attachments(message):
+    for attachment in iter_image_attachments(message):
         if len(content_parts) >= limit:
             break
         url = sanitize_image_urls([getattr(attachment, "url", "")], limit=1)
         if url and url[0] not in image_urls:
             image_urls.append(url[0])
-        image_bytes = await _read_attachment_image_bytes(attachment)
+        image_bytes = await read_attachment_bytes(attachment, max_bytes=MAX_ATTACHMENT_IMAGE_BYTES)
         if image_bytes:
             content_parts.append({
                 "type": "image_bytes",
                 "image_bytes": {
                     "data": image_bytes,
-                    "mime_type": _attachment_mime_type(attachment),
+                    "mime_type": attachment_mime_type(attachment),
                 },
             })
         elif url:
             content_parts.append(_image_url_part(url[0]))
-    for attachment in _iter_video_attachments(message):
+    for attachment in iter_video_attachments(message):
         if len(content_parts) >= limit:
             break
-        video_bytes = await _read_attachment_video_bytes(attachment)
+        video_bytes = await read_attachment_bytes(attachment, max_bytes=MAX_ATTACHMENT_VIDEO_BYTES)
         if video_bytes:
             content_parts.append({
                 "type": "video_bytes",
                 "video_bytes": {
                     "data": video_bytes,
-                    "mime_type": _attachment_mime_type(attachment),
+                    "mime_type": attachment_mime_type(attachment),
                     "filename": str(getattr(attachment, "filename", "") or ""),
+                    "duration_seconds": attachment_duration_seconds(attachment),
+                },
+            })
+    for attachment in iter_audio_attachments(message):
+        if len(content_parts) >= limit:
+            break
+        audio_bytes = await read_attachment_bytes(attachment, max_bytes=MAX_ATTACHMENT_AUDIO_BYTES)
+        if audio_bytes:
+            content_parts.append({
+                "type": "audio_bytes",
+                "audio_bytes": {
+                    "data": audio_bytes,
+                    "mime_type": attachment_mime_type(attachment),
+                    "filename": str(getattr(attachment, "filename", "") or ""),
+                    "duration_seconds": attachment_duration_seconds(attachment),
+                    "is_voice_message": message_is_voice_message(message),
                 },
             })
     remaining = max(0, limit - len(content_parts))
@@ -205,28 +232,6 @@ def _extract_supported_media_page_urls(text: str, limit: int = MAX_IMAGE_URLS) -
         if len(urls) >= limit:
             break
     return urls
-
-
-def _iter_image_attachments(message) -> list:
-    attachments = []
-    for attachment in getattr(message, "attachments", []) or []:
-        content_type = str(getattr(attachment, "content_type", "") or "").lower()
-        url = str(getattr(attachment, "url", "") or "").strip()
-        filename = str(getattr(attachment, "filename", "") or "").lower()
-        if content_type.startswith("image/") or _has_image_extension(filename) or _has_image_extension(url):
-            attachments.append(attachment)
-    return attachments
-
-
-def _iter_video_attachments(message) -> list:
-    attachments = []
-    for attachment in getattr(message, "attachments", []) or []:
-        content_type = str(getattr(attachment, "content_type", "") or "").lower()
-        url = str(getattr(attachment, "url", "") or "").strip()
-        filename = str(getattr(attachment, "filename", "") or "").lower()
-        if content_type.startswith("video/") or _has_video_extension(filename) or _has_video_extension(url):
-            attachments.append(attachment)
-    return attachments
 
 
 def _collect_embed_image_urls(message, limit: int = MAX_IMAGE_URLS) -> list[str]:
@@ -358,57 +363,6 @@ def _extract_html_image_candidates(html: str, base_url: str) -> list[str]:
     return candidates
 
 
-async def _read_attachment_image_bytes(attachment) -> bytes:
-    size = int(getattr(attachment, "size", 0) or 0)
-    if size > MAX_ATTACHMENT_IMAGE_BYTES:
-        return b""
-    read = getattr(attachment, "read", None)
-    if not callable(read):
-        return b""
-    try:
-        data = await read(use_cached=True)
-    except TypeError:
-        data = await read()
-    except Exception:
-        return b""
-    if not isinstance(data, (bytes, bytearray)) or not data:
-        return b""
-    if len(data) > MAX_ATTACHMENT_IMAGE_BYTES:
-        return b""
-    return bytes(data)
-
-
-async def _read_attachment_video_bytes(attachment) -> bytes:
-    size = int(getattr(attachment, "size", 0) or 0)
-    if size > MAX_ATTACHMENT_VIDEO_BYTES:
-        return b""
-    read = getattr(attachment, "read", None)
-    if not callable(read):
-        return b""
-    try:
-        data = await read(use_cached=True)
-    except TypeError:
-        data = await read()
-    except Exception:
-        return b""
-    if not isinstance(data, (bytes, bytearray)) or not data:
-        return b""
-    if len(data) > MAX_ATTACHMENT_VIDEO_BYTES:
-        return b""
-    return bytes(data)
-
-
-def _attachment_mime_type(attachment) -> str:
-    content_type = str(getattr(attachment, "content_type", "") or "").split(";", 1)[0].strip().lower()
-    if content_type.startswith("image/"):
-        return content_type
-    guessed = (
-        mimetypes.guess_type(str(getattr(attachment, "filename", "") or ""))[0]
-        or mimetypes.guess_type(str(getattr(attachment, "url", "") or ""))[0]
-    )
-    return guessed or "application/octet-stream"
-
-
 def _image_url_part(url: str) -> dict:
     return {"type": "image_url", "image_url": {"url": url}}
 
@@ -436,11 +390,6 @@ def _normalize_image_url(url, *, base_url: str = "") -> str:
 def _has_image_extension(value: str) -> bool:
     parsed = urlparse(str(value or "").strip().lower())
     return parsed.path.endswith(IMAGE_EXTENSIONS)
-
-
-def _has_video_extension(value: str) -> bool:
-    parsed = urlparse(str(value or "").strip().lower())
-    return parsed.path.endswith(VIDEO_EXTENSIONS)
 
 
 def _is_supported_media_page_url(value: str) -> bool:
