@@ -8,6 +8,7 @@ from utils.message_media import (
     collect_message_image_urls,
     collect_message_media,
     collect_message_source_urls,
+    message_has_video_attachment,
 )
 
 
@@ -59,6 +60,27 @@ class FakeEmbed:
 
 
 class MessageMediaTests(unittest.IsolatedAsyncioTestCase):
+    def test_detects_video_attachment_by_mime_type(self):
+        message = FakeMessage([
+            FakeAttachment("https://cdn.discordapp.com/attachments/123", "video/mp4", "upload"),
+        ])
+
+        self.assertTrue(message_has_video_attachment(message))
+
+    def test_detects_video_attachment_by_extension(self):
+        message = FakeMessage([
+            FakeAttachment("https://cdn.discordapp.com/attachments/clip.webm", "", "clip.webm"),
+        ])
+
+        self.assertTrue(message_has_video_attachment(message))
+
+    def test_does_not_treat_audio_attachment_as_video(self):
+        message = FakeMessage([
+            FakeAttachment("https://cdn.discordapp.com/attachments/voice.ogg", "audio/ogg", "voice.ogg"),
+        ])
+
+        self.assertFalse(message_has_video_attachment(message))
+
     def test_collects_direct_image_url_from_dialogue(self):
         urls = collect_message_image_urls(
             FakeMessage(),

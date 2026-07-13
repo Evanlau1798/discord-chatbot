@@ -32,6 +32,10 @@ class MessageMedia:
     content_parts: list[dict]
 
 
+def message_has_video_attachment(message) -> bool:
+    return bool(_iter_video_attachments(message))
+
+
 def collect_message_image_urls(message, dialogue: str, limit: int = MAX_IMAGE_URLS) -> list[str]:
     attachment_urls = []
     for attachment in getattr(message, "attachments", []) or []:

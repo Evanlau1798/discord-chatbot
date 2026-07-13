@@ -29,6 +29,7 @@ from utils.imagine_config import get_imagine_base_url, is_image_generation_enabl
 from utils.imagine_rate_limit_store import ImagineRateLimiter, format_imagine_rate_limit_notice
 from utils.json_response_protocol import build_fallback_response, build_repair_instruction, parse_model_response
 from utils.memory_store import MemoryStore
+from utils.message_media import message_has_video_attachment
 from utils.persona_image_prompt import PersonaImagePromptStore, merge_persona_image_prompt
 from utils.persona_select_view import PersonaSelectView
 from utils.persona_store import PersonaPromptBuilder, PersonaStore, format_persona_list
@@ -38,6 +39,7 @@ logger = logging.getLogger("discord.extensions.AIChat")
 USER_CHAT_LOCKS = defaultdict(asyncio.Lock)
 GENAI_RETRY_DELAYS = (1, 5, 5, 10, 30)
 LOADING_EMOJI = "<a:loading:1303077872805744650>"
+VIDEO_PROCESSING_STATUS = f"-# {LOADING_EMOJI} 幀在處理影片文字"
 
 
 class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
@@ -82,6 +84,8 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
         async with keep_typing(message.channel):
             async with self.request_limiter.with_queue_updates(on_queue_update):
                 try:
+                    if message_has_video_attachment(message):
+                        await request_status.set_base(VIDEO_PROCESSING_STATUS)
                     result = await self.chat(
                         message=message,
                         dialogue=text,
