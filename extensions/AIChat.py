@@ -28,6 +28,7 @@ from utils.image_context_cache import ImageContextCache
 from utils.imagine_config import get_imagine_base_url, is_image_generation_enabled
 from utils.imagine_rate_limit_store import ImagineRateLimiter, format_imagine_rate_limit_notice
 from utils.json_response_protocol import build_fallback_response, build_repair_instruction, parse_model_response
+from utils.local_asr_client import LocalASRClient
 from utils.memory_store import MemoryStore
 from utils.message_media import message_has_video_attachment
 from utils.persona_image_prompt import PersonaImagePromptStore, merge_persona_image_prompt
@@ -55,6 +56,7 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
         self.image_context_cache.cleanup_expired()
         self.imagine_rate_limiter = ImagineRateLimiter()
         self.browser_client = HeadlessBrowserClient()
+        self.local_asr_client = LocalASRClient()
         self.request_limiter = AiChatRequestLimiter()
         logger.info("ai_chat.request_limiter_configured max_parallel_requests=%s", self.request_limiter.max_parallel_requests)
         self.image_generation_enabled = is_image_generation_enabled()
