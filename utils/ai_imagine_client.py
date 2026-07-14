@@ -14,6 +14,7 @@ from uuid import uuid4
 import requests
 
 from utils.ai_api_logging import log_ai_api_event
+from utils.image_edit_input import normalize_image_input
 from utils.imagine_config import DEFAULT_IMAGINE_BASE_URL
 
 LOCAL_SUB2API_BASE_URL = DEFAULT_IMAGINE_BASE_URL
@@ -29,6 +30,14 @@ class ImagineResult:
     prompt: str
     image_urls: list[str]
     image_paths: list[Path]
+    operation: str = "create"
+
+
+@dataclass(frozen=True)
+class ImagineSourceImage:
+    filename: str
+    mime_type: str
+    data: bytes
 
 
 class ImagineClient:
@@ -43,26 +52,60 @@ class ImagineClient:
         self.download_dir = Path(download_dir)
         self.resolved_api_mode = _normalize_imagine_api_mode(api_mode)
 
-    def generate(self, prompt: str) -> ImagineResult:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        operation: str = "create",
+        source_images: list[ImagineSourceImage] | tuple[ImagineSourceImage, ...] = (),
+    ) -> ImagineResult:
         normalized_prompt = str(prompt or "").strip()
         if not normalized_prompt:
             raise ImagineAPIError("生圖 prompt 不可為空")
-        payload = {"model": self.model, "prompt": normalized_prompt}
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        endpoint = f"{self.base_url}/images/generations"
+        normalized_operation = _normalize_image_operation(operation)
+        prepared_sources = _prepare_source_images(source_images)
+        if normalized_operation == "create" and prepared_sources:
+            raise ImagineAPIError("create 操作不可包含來源圖片")
+        if normalized_operation != "create" and not prepared_sources:
+            raise ImagineAPIError("圖片編輯需要至少一張有效的來源圖片")
+        api_operation = "images_generations" if normalized_operation == "create" else "images_edits"
+        endpoint = f"{self.base_url}/images/{'generations' if normalized_operation == 'create' else 'edits'}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
         started_at = time.monotonic()
         log_ai_api_event(
             "request",
             provider="imagine",
-            operation="images_generations",
+            operation=api_operation,
             model=self.model,
-            request_body={"model": self.model, "prompt_len": len(normalized_prompt)},
-            request_meta={"url": endpoint, "api_mode": self.resolved_api_mode},
+            request_body={
+                "model": self.model,
+                "prompt_len": len(normalized_prompt),
+                "source_image_count": len(prepared_sources),
+            },
+            request_meta={
+                "url": endpoint,
+                "api_mode": self.resolved_api_mode,
+                "requested_operation": normalized_operation,
+            },
         )
         try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=IMAGINE_GENERATION_TIMEOUT)
+            if normalized_operation == "create":
+                response = requests.post(
+                    endpoint,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={"model": self.model, "prompt": normalized_prompt},
+                    timeout=IMAGINE_GENERATION_TIMEOUT,
+                )
+            else:
+                response = requests.post(
+                    endpoint,
+                    headers=headers,
+                    data={"model": self.model, "prompt": normalized_prompt},
+                    files=[("image[]", (item.filename, item.data, item.mime_type)) for item in prepared_sources],
+                    timeout=IMAGINE_GENERATION_TIMEOUT,
+                )
         except requests.RequestException as exc:
-            _log_imagine_error("images_generations", self.model, started_at, exc)
+            _log_imagine_error(api_operation, self.model, started_at, exc)
             raise ImagineAPIError(f"Imagine API 請求失敗: {exc}") from exc
 
         try:
@@ -70,7 +113,7 @@ class ImagineClient:
             response_payload = _load_response_json(response)
         except ImagineAPIError as exc:
             _log_imagine_error(
-                "images_generations",
+                api_operation,
                 self.model,
                 started_at,
                 exc,
@@ -86,12 +129,17 @@ class ImagineClient:
         log_ai_api_event(
             "response",
             provider="imagine",
-            operation="images_generations",
+            operation=api_operation,
             model=self.model,
             elapsed_ms=round((time.monotonic() - started_at) * 1000, 3),
             response=_summarize_imagine_response_payload(response_payload) | {"image_count": len(image_paths)},
         )
-        return ImagineResult(prompt=normalized_prompt, image_urls=image_urls, image_paths=image_paths)
+        return ImagineResult(
+            prompt=normalized_prompt,
+            image_urls=image_urls,
+            image_paths=image_paths,
+            operation=normalized_operation,
+        )
 
     def _materialize_image_entries(self, entries: list[dict[str, str]]) -> tuple[list[str], list[Path]]:
         self.download_dir.mkdir(parents=True, exist_ok=True)
@@ -130,6 +178,31 @@ def _normalize_imagine_api_mode(api_mode: str | None) -> str:
     if normalized == "gpt":
         return "gpt"
     raise ImagineAPIError("AI_IMAGINE_API_MODE 僅支援 local 或 gpt")
+
+
+def _normalize_image_operation(operation: str) -> str:
+    normalized = str(operation or "create").strip().lower()
+    if normalized not in {"create", "edit", "variation"}:
+        raise ImagineAPIError("圖片操作僅支援 create、edit 或 variation")
+    return normalized
+
+
+def _prepare_source_images(source_images) -> tuple[ImagineSourceImage, ...]:
+    raw_sources = tuple(source_images or ())
+    if len(raw_sources) > 16:
+        raise ImagineAPIError("來源圖片不可超過 16 張")
+    prepared = []
+    for source in raw_sources:
+        try:
+            normalized = normalize_image_input(source.data, source.filename)
+        except (AttributeError, ValueError) as exc:
+            raise ImagineAPIError(str(exc)) from exc
+        prepared.append(ImagineSourceImage(
+            filename=normalized.filename,
+            mime_type=normalized.mime_type,
+            data=normalized.data,
+        ))
+    return tuple(prepared)
 
 
 def _extract_generated_image_entries(payload: dict[str, Any]) -> list[dict[str, str]]:

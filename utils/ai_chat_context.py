@@ -298,6 +298,7 @@ class AiChatContextMixin:
         persona,
         memory,
         server_history: list[dict] | None = None,
+        image_candidates: list | tuple = (),
     ) -> list[dict]:
         system_prompt = self.prompt_builder.build_system_prompt(persona)
         display_name = self._message_author_display_name(message)
@@ -331,13 +332,22 @@ class AiChatContextMixin:
             payload_content["attachments"] = current_attachments
         if current_embeds:
             payload_content["embeds"] = current_embeds
+        if image_candidates:
+            payload_content["imageGenerationCandidates"] = [
+                candidate.to_prompt_payload() for candidate in image_candidates
+            ]
         if media.image_urls:
             payload_content["imageUrls"] = media.image_urls
         if media.diagnostics:
             payload_content["mediaDiagnostics"] = media.diagnostics
         if prefetched_results:
             payload_content["prefetchedBrowserContext"] = build_inline_browser_context(prefetched_results)
-        has_visual_media = bool(media.image_urls or prefetched_image_urls or any(
+        candidate_parts = [
+            candidate.to_content_part()
+            for candidate in image_candidates
+            if getattr(candidate, "source", "") != "current_attachment"
+        ]
+        has_visual_media = bool(image_candidates or media.image_urls or prefetched_image_urls or any(
             part.get("type") in {"image_url", "image_bytes", "video_bytes"} for part in media.content_parts
         ))
         if has_visual_media:
@@ -353,7 +363,7 @@ class AiChatContextMixin:
         content = build_multimodal_content(
             json.dumps(payload, ensure_ascii=False),
             image_urls=prefetched_image_urls,
-            image_parts=media.content_parts,
+            image_parts=[*media.content_parts, *candidate_parts],
         )
         return [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": content}]
 

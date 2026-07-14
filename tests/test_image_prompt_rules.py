@@ -19,6 +19,17 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("否則不要加入", prompt)
         self.assertIn("文字", prompt)
 
+    def test_system_prompt_routes_reference_images_to_edit_protocol(self):
+        persona = Persona(key="test", name="Test", data={"characterName": "Test"})
+
+        with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "1"}):
+            prompt = PersonaPromptBuilder().build_system_prompt(persona)
+
+        self.assertIn('operation: "create" | "edit" | "variation"', prompt)
+        self.assertIn("sourceImageIds", prompt)
+        self.assertIn("不可改成從零生圖", prompt)
+        self.assertIn("要求使用者重新附圖或直接回覆原圖", prompt)
+
     def test_system_prompt_omits_image_generation_protocol_when_disabled(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})
 
@@ -67,6 +78,14 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("除非使用者明確指示在圖片中加入特定文字", instruction)
         self.assertIn("imageGeneration.prompt 不要加入明文文字", instruction)
 
+    def test_repair_instruction_keeps_image_operation_contract(self):
+        with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "1"}):
+            instruction = build_repair_instruction()
+
+        self.assertIn("operation", instruction)
+        self.assertIn("sourceImageIds", instruction)
+        self.assertIn("edit 或 variation", instruction)
+
     def test_repair_instruction_omits_image_generation_protocol_when_disabled(self):
         with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "0"}):
             instruction = build_repair_instruction()
@@ -105,6 +124,29 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("soft directional light", prompt)
         self.assertIn("Only use dramatic shadows", prompt)
         self.assertLess(prompt.index("polished modern anime illustration style"), prompt.index("User image request:"))
+
+    def test_edit_prompt_preserves_unspecified_details_without_forcing_create_style(self):
+        prompt = merge_persona_image_prompt(
+            "character identity constraints",
+            "Change only the shirt color to blue.",
+            operation="edit",
+        )
+
+        self.assertNotIn(IMAGE_STYLE_POLICY, prompt)
+        self.assertNotIn("character identity constraints", prompt)
+        self.assertIn("Preserve every detail", prompt)
+        self.assertIn("Change only the shirt color to blue.", prompt)
+
+    def test_variation_prompt_preserves_identity_and_uses_reference(self):
+        prompt = merge_persona_image_prompt(
+            "character identity constraints",
+            "Try a different pose.",
+            operation="variation",
+        )
+
+        self.assertIn("distinct visual variation", prompt)
+        self.assertIn("recognizable identity", prompt)
+        self.assertIn("character identity constraints", prompt)
 
     def test_merge_prompt_adds_text_policy_with_persona_reference(self):
         prompt = merge_persona_image_prompt("silver hair; red eyes", "standing in a cafe")

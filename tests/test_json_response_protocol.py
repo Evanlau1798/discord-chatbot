@@ -6,6 +6,56 @@ from utils.json_response_protocol import BrowserFindRequest, ImageUnderstandingB
 
 
 class JsonResponseProtocolBrowserTests(unittest.TestCase):
+    def test_image_generation_defaults_to_create_for_legacy_payload(self):
+        parsed = parse_model_response(
+            '{"replyText":"好。","imageGeneration":{"needed":true,"prompt":"draw a cat"}}'
+        )
+
+        self.assertEqual(parsed.image_generation.operation, "create")
+        self.assertEqual(parsed.image_generation.source_image_ids, ())
+
+    def test_image_edit_parses_deduped_source_candidate_ids(self):
+        parsed = parse_model_response(
+            """
+            {
+              "replyText": "我來修改。",
+              "imageGeneration": {
+                "needed": true,
+                "operation": "edit",
+                "prompt": "Change the shirt to blue.",
+                "sourceImageIds": ["current:0", "current:0", "reply:123:0"]
+              }
+            }
+            """
+        )
+
+        self.assertEqual(parsed.image_generation.operation, "edit")
+        self.assertEqual(parsed.image_generation.source_image_ids, ("current:0", "reply:123:0"))
+
+    def test_image_variation_requires_a_source_candidate(self):
+        with self.assertRaisesRegex(ValueError, "sourceImageIds"):
+            parse_model_response(
+                '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"variation","prompt":"A similar version"}}'
+            )
+
+    def test_image_create_rejects_source_candidate_ids(self):
+        with self.assertRaisesRegex(ValueError, "sourceImageIds"):
+            parse_model_response(
+                '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"create","prompt":"draw","sourceImageIds":["current:0"]}}'
+            )
+
+    def test_image_generation_rejects_unknown_operation(self):
+        with self.assertRaisesRegex(ValueError, "operation"):
+            parse_model_response(
+                '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"remix","prompt":"draw"}}'
+            )
+
+    def test_image_generation_rejects_untrusted_source_identifier(self):
+        with self.assertRaisesRegex(ValueError, "sourceImageIds"):
+            parse_model_response(
+                '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"edit","prompt":"draw","sourceImageIds":["../../secret"]}}'
+            )
+
     def test_structured_openserp_search_options_are_parsed(self):
         parsed = parse_model_response(
             """
