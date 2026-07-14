@@ -74,9 +74,34 @@ class PersonaImagePromptStore:
         return None
 
 
-def merge_persona_image_prompt(image_prompt: str, generated_prompt: str) -> str:
+def merge_persona_image_prompt(image_prompt: str, generated_prompt: str, *, operation: str = "create") -> str:
     normalized_image_prompt = str(image_prompt or "").strip()
     normalized_generated_prompt = str(generated_prompt or "").strip()
+    normalized_operation = str(operation or "create").strip().lower()
+    if normalized_operation == "edit":
+        return (
+            f"{IMAGE_TEXT_POLICY}\n\n"
+            "Edit the supplied source image according to the requested changes. Preserve every detail that the user "
+            "did not ask to change, including identity, face, body proportions, pose, composition, camera angle, "
+            "lighting, colors, background, and existing visual style. Do not redesign or restyle the image unless "
+            "the user explicitly requests it.\n\n"
+            "Requested changes:\n"
+            f"{normalized_generated_prompt}"
+        ).strip()
+    if normalized_operation == "variation":
+        identity_constraints = (
+            "\n\nUse these character identity constraints when they match the supplied reference:\n"
+            f"{normalized_image_prompt}"
+            if normalized_image_prompt
+            else ""
+        )
+        return (
+            f"{IMAGE_STYLE_POLICY}\n\n{IMAGE_TEXT_POLICY}\n\n"
+            "Create a distinct visual variation of the supplied source image. Preserve its recognizable identity, "
+            "core subject, and defining features while varying only the pose, framing, composition, or secondary "
+            "details requested by the user."
+            f"{identity_constraints}\n\nVariation request:\n{normalized_generated_prompt}"
+        ).strip()
     base_policy = f"{IMAGE_STYLE_POLICY}\n\n{IMAGE_TEXT_POLICY}"
     if not normalized_image_prompt:
         return f"{base_policy}\n\nUser image request:\n{normalized_generated_prompt}".strip()

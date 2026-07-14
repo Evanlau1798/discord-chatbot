@@ -125,6 +125,29 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("Only use dramatic shadows", prompt)
         self.assertLess(prompt.index("polished modern anime illustration style"), prompt.index("User image request:"))
 
+    def test_edit_prompt_preserves_unspecified_details_without_forcing_create_style(self):
+        prompt = merge_persona_image_prompt(
+            "character identity constraints",
+            "Change only the shirt color to blue.",
+            operation="edit",
+        )
+
+        self.assertNotIn(IMAGE_STYLE_POLICY, prompt)
+        self.assertNotIn("character identity constraints", prompt)
+        self.assertIn("Preserve every detail", prompt)
+        self.assertIn("Change only the shirt color to blue.", prompt)
+
+    def test_variation_prompt_preserves_identity_and_uses_reference(self):
+        prompt = merge_persona_image_prompt(
+            "character identity constraints",
+            "Try a different pose.",
+            operation="variation",
+        )
+
+        self.assertIn("distinct visual variation", prompt)
+        self.assertIn("recognizable identity", prompt)
+        self.assertIn("character identity constraints", prompt)
+
     def test_merge_prompt_adds_text_policy_with_persona_reference(self):
         prompt = merge_persona_image_prompt("silver hair; red eyes", "standing in a cafe")
 
