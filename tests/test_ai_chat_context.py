@@ -6,6 +6,7 @@ import unittest
 from utils.browser_result_types import BrowserFetchResult
 from utils.ai_chat_context import AiChatContextMixin
 from utils.image_context_cache import CachedImageContext
+from utils.image_reference_resolver import ImageReferenceCandidate
 from utils.json_response_protocol import ImageUnderstandingBlock
 from utils.persona_store import Persona, PersonaPromptBuilder
 
@@ -119,6 +120,34 @@ class AiChatContextImageCacheTests(unittest.TestCase):
 
 
 class AiChatContextBrowserPrefetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_request_messages_expose_trusted_image_generation_candidates(self):
+        candidate = ImageReferenceCandidate(
+            candidate_id="reply:90:0",
+            source="discord_reply",
+            message_id="90",
+            attachment_id="900",
+            filename="source.png",
+            mime_type="image/png",
+            data=b"reference-image",
+        )
+        cog = FakeCog()
+
+        messages = await cog._build_request_messages(
+            _fake_message(),
+            "修改上一張圖片",
+            [],
+            _fake_persona(),
+            "",
+            [],
+            image_candidates=[candidate],
+        )
+        content = messages[-1]["content"]
+        payload = json.loads(content[0]["text"])["payload"]
+
+        self.assertEqual(payload["imageGenerationCandidates"][0]["id"], "reply:90:0")
+        self.assertNotIn("data", payload["imageGenerationCandidates"][0])
+        self.assertEqual(content[1]["image_bytes"]["data"], b"reference-image")
+
     async def test_request_messages_prefetch_explicit_web_url_into_payload(self):
         browser_client = FakeBrowserClient([
             BrowserFetchResult(

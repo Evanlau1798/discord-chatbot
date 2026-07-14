@@ -50,6 +50,28 @@ class ImageReferenceResolverTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(store.latest_calls[0], ("10", "55", "7"))
 
+    async def test_discord_message_link_loads_images_from_the_current_guild(self):
+        linked = _message(80, owner_id=2, attachments=[_attachment(40, "linked.png", b"linked")])
+        resolver = ImageReferenceResolver(_bot(messages={80: linked}), _store())
+
+        candidates = await resolver.resolve(
+            _message(100, owner_id=1),
+            "請修改 https://discord.com/channels/10/20/80 這張圖",
+        )
+
+        self.assertEqual([item.candidate_id for item in candidates], ["linked:80:0"])
+
+    async def test_discord_message_link_cannot_cross_guild_boundaries(self):
+        linked = _message(80, owner_id=2, attachments=[_attachment(40, "linked.png", b"linked")])
+        resolver = ImageReferenceResolver(_bot(messages={80: linked}), _store())
+
+        candidates = await resolver.resolve(
+            _message(100, owner_id=1),
+            "請修改 https://discord.com/channels/999/20/80 這張圖",
+        )
+
+        self.assertEqual(candidates, [])
+
 
 class _Store:
     def __init__(self, records):

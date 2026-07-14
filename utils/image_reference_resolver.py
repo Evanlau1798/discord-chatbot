@@ -12,6 +12,7 @@ DEFAULT_MAX_REFERENCE_IMAGES = 4
 MAX_REFERENCE_IMAGES_HARD_LIMIT = 16
 MAX_REPLY_REFERENCE_DEPTH = 10
 PREVIOUS_IMAGE_PATTERN = re.compile(
+    r"(?:上一張|前一張)|"
     r"(?:之前|剛才|剛剛|上一張|前一張|那張|先前).{0,8}(?:圖|圖片|影像)|"
     r"(?:圖|圖片|影像).{0,8}(?:之前|剛才|剛剛|上一張|前一張|那張|先前)|"
     r"\b(?:previous|last|earlier|that)\s+(?:image|picture|photo)\b",
@@ -79,10 +80,13 @@ class ImageReferenceResolver:
             )
 
     async def _append_linked_messages(self, candidates, seen, source_message, dialogue: str) -> None:
+        current_guild_id = _entity_id(getattr(source_message, "guild", None)) or "@me"
         for key in extract_discord_message_context_keys(dialogue):
             if len(candidates) >= self.max_candidates:
                 return
             _, guild_id, channel_id, message_id = key.split(":", 3)
+            if guild_id != current_guild_id:
+                continue
             linked = await self._fetch_message(channel_id, message_id, source_message)
             if linked is None:
                 continue

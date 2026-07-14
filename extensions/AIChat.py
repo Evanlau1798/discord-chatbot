@@ -5,7 +5,6 @@ import io
 import logging
 import os
 from collections import defaultdict
-from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -17,7 +16,8 @@ from utils.ai_chat_browser_flow import AiChatBrowserFlowMixin
 from utils.ai_chat_concurrency import AiChatRequestLimiter
 from utils.ai_chat_settings import AiChatUserSettingsStore
 from utils.ai_chat_context import AiChatContextMixin, MAX_CHAT_TURNS
-from utils.ai_imagine_client import ImagineAPIError, ImagineClient
+from utils.ai_chat_image_flow import AiChatImageFlowMixin
+from utils.ai_imagine_client import ImagineAPIError
 from utils.discord_notice_timing import MIN_BROWSER_NOTICE_DISPLAY_SECONDS, wait_for_min_notice_display
 from utils.discord_files import send_content_with_files
 from utils.discord_presence import keep_typing
@@ -25,13 +25,15 @@ from utils.discord_request_status import DiscordRequestStatus
 from utils.discord_status_notice import delete_notice, edit_notice, format_queue_notice_content
 from utils.gemini_api import DEFAULT_GEMINI_MODEL, GeminiChatClient, _is_retryable_api_error
 from utils.image_context_cache import ImageContextCache
-from utils.imagine_config import get_imagine_base_url, is_image_generation_enabled
+from utils.image_reference_resolver import ImageReferenceResolver
+from utils.image_reference_store import ImageReferenceStore
+from utils.imagine_config import is_image_generation_enabled
 from utils.imagine_rate_limit_store import ImagineRateLimiter, format_imagine_rate_limit_notice
 from utils.json_response_protocol import build_fallback_response, build_repair_instruction, parse_model_response
 from utils.local_asr_client import LocalASRClient
 from utils.memory_store import MemoryStore
 from utils.message_media import message_has_video_attachment
-from utils.persona_image_prompt import PersonaImagePromptStore, merge_persona_image_prompt
+from utils.persona_image_prompt import PersonaImagePromptStore
 from utils.persona_select_view import PersonaSelectView
 from utils.persona_store import PersonaPromptBuilder, PersonaStore, format_persona_list
 from utils.web_tool_client import HeadlessBrowserClient
@@ -43,7 +45,7 @@ LOADING_EMOJI = "<a:loading:1303077872805744650>"
 VIDEO_PROCESSING_STATUS = f"-# {LOADING_EMOJI} 幀在處理影片文字"
 
 
-class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
+class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
     def __init__(self, bot):
         self.bot: discord.Bot = bot
         self.user_history = self.load_user_history()
@@ -54,6 +56,9 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
         self.memory_store = MemoryStore()
         self.image_context_cache = ImageContextCache()
         self.image_context_cache.cleanup_expired()
+        self.image_reference_store = ImageReferenceStore()
+        self.image_reference_store.cleanup_expired()
+        self.image_reference_resolver = ImageReferenceResolver(bot, self.image_reference_store)
         self.imagine_rate_limiter = ImagineRateLimiter()
         self.browser_client = HeadlessBrowserClient()
         self.local_asr_client = LocalASRClient()
@@ -79,6 +84,7 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
         if not text and not message.attachments and not getattr(message, "embeds", []) and not getattr(message, "stickers", []):
             return
         request_status = DiscordRequestStatus(message, logger)
+        self._record_image_reference(message, owner_id=message.author.id)
 
         async def on_queue_update(update):
             await request_status.set_base(format_queue_notice_content(update, LOADING_EMOJI))
@@ -102,18 +108,20 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                                 if is_dm and result.get("browser_used")
                                 else (lambda content, files: result["delivered_message"].reply(content=content or None, files=files, mention_author=False))
                             )
-                            await send_content_with_files(
+                            sent_image_message = await send_content_with_files(
                                 image_sender,
                                 "",
                                 result["image_paths"],
                             )
+                            self._record_image_reference(sent_image_message, owner_id=message.author.id)
                         return
                     if result["image_paths"]:
-                        await send_content_with_files(
+                        sent_image_message = await send_content_with_files(
                             lambda content, files: message.reply(content=content, files=files, mention_author=False),
                             result["reply_text"],
                             result["image_paths"],
                         )
+                        self._record_image_reference(sent_image_message, owner_id=message.author.id)
                         await delete_notice(request_status.notice, logger)
                         return
                     if await edit_notice(request_status.notice, result["reply_text"], logger):
@@ -156,7 +164,19 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                 current_memory=current_memory,
                 server_participants=server_participants,
             )
-            request_messages = await self._build_request_messages(message, dialogue, history, persona, memory, server_history)
+            image_candidates = []
+            resolver = getattr(self, "image_reference_resolver", None)
+            if resolver is not None:
+                image_candidates = await resolver.resolve(message, dialogue)
+            request_messages = await self._build_request_messages(
+                message,
+                dialogue,
+                history,
+                persona,
+                memory,
+                server_history,
+                image_candidates=image_candidates,
+            )
             cached_content = self.persona_cache_names.get(persona.key) if persona is not None else None
             parsed, raw_response = await self._complete_and_parse_with_raw(
                 request_messages, message, cached_content, request_status
@@ -189,7 +209,7 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                 image_status_message = await self._upsert_image_status(message, browser_notice, parsed.reply_text)
                 if image_status_message is not None:
                     browser_notice = image_status_message
-                image_paths, image_error = await self._maybe_generate_image(parsed, persona)
+                image_paths, image_error = await self._maybe_generate_image(parsed, persona, image_candidates)
                 if image_paths and not image_error and image_quota_status is not None:
                     self.imagine_rate_limiter.record_success(message.author.id)
             else:
@@ -198,7 +218,13 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
                 self.memory_store.set_memory(message.author.id, parsed.memory.content)
             reply_text = parsed.reply_text
             if image_error:
-                reply_text = f"{reply_text}\n\n圖片生成服務暫時不可用，文字回覆先送出。"
+                error_message = (
+                    image_error
+                    if isinstance(image_error, str)
+                    else "圖片生成服務暫時不可用，文字回覆先送出。"
+                )
+                if error_message not in reply_text:
+                    reply_text = f"{reply_text}\n\n{error_message}"
             if image_rate_limited_until is not None:
                 reply_text = f"{reply_text}\n\n{format_imagine_rate_limit_notice(image_rate_limited_until)}"
             image_context = self._store_image_understanding_context(message, dialogue, parsed)
@@ -336,43 +362,6 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
             logger.debug("ai_chat.browser_notice_edit_failed", exc_info=True)
             return None
 
-    async def _upsert_image_status(self, message: discord.Message, browser_notice: discord.Message | None, reply_text: str):
-        content = self._append_status_block(reply_text, "正在繪製圖片")
-        if browser_notice is not None:
-            try:
-                await browser_notice.edit(content=content)
-                return browser_notice
-            except discord.HTTPException:
-                logger.debug("ai_chat.image_status_edit_failed", exc_info=True)
-        try:
-            return await message.reply(content=content, mention_author=False)
-        except discord.HTTPException:
-            logger.debug("ai_chat.image_status_send_failed", exc_info=True)
-            return browser_notice
-
-    @staticmethod
-    def _append_status_block(reply_text: str, status_text: str) -> str:
-        status_line = f"-# {LOADING_EMOJI} {status_text}"
-        normalized_reply = str(reply_text or "").strip()
-        max_reply_len = 2000 - len(status_line) - 2
-        if len(normalized_reply) > max_reply_len:
-            normalized_reply = f"{normalized_reply[:max(0, max_reply_len - 3)]}..."
-        return f"{normalized_reply}\n\n{status_line}".strip()
-
-    async def _maybe_generate_image(self, parsed, persona) -> tuple[list[Path], bool]:
-        if parsed.image_generation is None or not self.image_generation_enabled:
-            return [], False
-        image_prompt = merge_persona_image_prompt(
-            self.persona_image_prompt_store.get_prompt(persona),
-            parsed.image_generation.prompt,
-        )
-        try:
-            result = await asyncio.to_thread(self._get_imagine_client().generate, image_prompt)
-        except ImagineAPIError as exc:
-            logger.warning("ai_chat.image_generation_failed error=%s", exc)
-            return [], True
-        return result.image_paths, False
-
     @commands.slash_command(description="查看並切換 AI 人設")
     async def persona(self, ctx: discord.ApplicationContext):
         await ctx.respond(
@@ -436,16 +425,6 @@ class AiChat(AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
         if persona is None:
             raise ValueError(f"找不到人設: {normalized}")
         return persona.key
-
-    def _get_imagine_client(self):
-        if self.imagine_client is None:
-            self.imagine_client = ImagineClient(
-                api_key=os.getenv("AI_IMAGINE_API_KEY"),
-                base_url=get_imagine_base_url(),
-                model=os.getenv("AI_IMAGINE_MODEL", ""),
-                api_mode=os.getenv("AI_IMAGINE_API_MODE", "local"),
-            )
-        return self.imagine_client
 
 def _user_error_message(exc: Exception) -> str:
     if isinstance(exc, ImagineAPIError):
