@@ -13,6 +13,7 @@ class JsonResponseProtocolBrowserTests(unittest.TestCase):
 
         self.assertEqual(parsed.image_generation.operation, "create")
         self.assertEqual(parsed.image_generation.source_image_ids, ())
+        self.assertFalse(parsed.image_generation.use_persona_identity)
 
     def test_image_edit_parses_deduped_source_candidate_ids(self):
         parsed = parse_model_response(
@@ -31,6 +32,23 @@ class JsonResponseProtocolBrowserTests(unittest.TestCase):
 
         self.assertEqual(parsed.image_generation.operation, "edit")
         self.assertEqual(parsed.image_generation.source_image_ids, ("current:0", "reply:123:0"))
+        self.assertFalse(parsed.image_generation.use_persona_identity)
+
+    def test_image_edit_parses_explicit_persona_identity_intent(self):
+        parsed = parse_model_response(
+            '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"edit",'
+            '"prompt":"Place the active persona in this scene.","sourceImageIds":["current:0"],'
+            '"usePersonaIdentity":true}}'
+        )
+
+        self.assertTrue(parsed.image_generation.use_persona_identity)
+
+    def test_image_generation_rejects_non_boolean_persona_identity_intent(self):
+        with self.assertRaisesRegex(ValueError, "usePersonaIdentity"):
+            parse_model_response(
+                '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"edit",'
+                '"prompt":"draw","sourceImageIds":["current:0"],"usePersonaIdentity":"yes"}}'
+            )
 
     def test_image_variation_requires_a_source_candidate(self):
         with self.assertRaisesRegex(ValueError, "sourceImageIds"):

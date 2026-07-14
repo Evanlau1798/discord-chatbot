@@ -74,11 +74,19 @@ class PersonaImagePromptStore:
         return None
 
 
-def merge_persona_image_prompt(image_prompt: str, generated_prompt: str, *, operation: str = "create") -> str:
+def merge_persona_image_prompt(
+    image_prompt: str,
+    generated_prompt: str,
+    *,
+    operation: str = "create",
+    use_persona_identity: bool = False,
+) -> str:
     normalized_image_prompt = str(image_prompt or "").strip()
     normalized_generated_prompt = str(generated_prompt or "").strip()
     normalized_operation = str(operation or "create").strip().lower()
     if normalized_operation == "edit":
+        if use_persona_identity and normalized_image_prompt:
+            return _build_persona_edit_prompt(normalized_image_prompt, normalized_generated_prompt)
         return (
             f"{IMAGE_TEXT_POLICY}\n\n"
             "Edit the supplied source image according to the requested changes. Preserve every detail that the user "
@@ -90,9 +98,10 @@ def merge_persona_image_prompt(image_prompt: str, generated_prompt: str, *, oper
         ).strip()
     if normalized_operation == "variation":
         identity_constraints = (
-            "\n\nUse these character identity constraints when they match the supplied reference:\n"
+            "\n\nUse these authoritative character identity constraints. They override conflicting character "
+            "features in the supplied source image, except where the user explicitly requests a change:\n"
             f"{normalized_image_prompt}"
-            if normalized_image_prompt
+            if use_persona_identity and normalized_image_prompt
             else ""
         )
         return (
@@ -111,6 +120,24 @@ def merge_persona_image_prompt(image_prompt: str, generated_prompt: str, *, oper
         f"{normalized_image_prompt}\n\n"
         "User image request:\n"
         f"{normalized_generated_prompt}"
+    ).strip()
+
+
+def _build_persona_edit_prompt(image_prompt: str, generated_prompt: str) -> str:
+    return (
+        f"{IMAGE_TEXT_POLICY}\n\n"
+        "The following constraints are the authoritative character identity for the output. They override any "
+        "conflicting face, hair, eyes, body, clothing design, accessories, or other identity features visible in "
+        "the supplied source image, unless the user explicitly requests a specific deviation. Do not blend this "
+        "identity with the source character and do not inherit unrequested source character traits.\n\n"
+        "Authoritative persona identity constraints:\n"
+        f"{image_prompt}\n\n"
+        "Use the source image only for the scene, composition, camera angle, pose, background, props, lighting, "
+        "visual style, and other aspects that the user asks to retain or reference. Preserve every unspecified "
+        "source detail except conflicting character identity features. Do not redesign or restyle those retained "
+        "source aspects unless the user explicitly requests it.\n\n"
+        "Requested changes:\n"
+        f"{generated_prompt}"
     ).strip()
 
 

@@ -55,6 +55,27 @@ class AiChatImageFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("重新附圖", error)
         client.generate.assert_not_called()
 
+    async def test_persona_edit_forwards_authoritative_identity_constraints(self):
+        client = Mock()
+        client.generate.return_value = ImagineResult("prompt", [], [Path("tmp/edit.png")], operation="edit")
+        cog = _cog(client)
+        parsed = ParsedAIResponse(
+            reply_text="ok",
+            image_generation=ImageGenerationBlock(
+                needed=True,
+                prompt="Place the active persona in this scene.",
+                operation="edit",
+                source_image_ids=("current:0",),
+                use_persona_identity=True,
+            ),
+        )
+
+        await cog._maybe_generate_image(parsed, SimpleNamespace(), [_candidate("current:0", b"scene")])
+
+        generated_prompt = client.generate.call_args.args[0]
+        self.assertIn("persona constraints", generated_prompt)
+        self.assertIn("authoritative character identity", generated_prompt)
+
     def test_record_image_reference_uses_requesting_user_as_owner(self):
         store = Mock()
         cog = _cog(Mock(), store=store)
