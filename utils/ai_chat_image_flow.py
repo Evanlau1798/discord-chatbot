@@ -63,6 +63,7 @@ class AiChatImageFlowMixin:
             self.persona_image_prompt_store.get_prompt(persona),
             block.prompt,
             operation=block.operation,
+            use_persona_identity=block.use_persona_identity,
         )
         try:
             result = await asyncio.to_thread(
