@@ -15,12 +15,17 @@ SEARCH_FAILURE_REPLY = (
     "我可以依這些線索換個方向搜尋。"
 )
 SEARCH_SOURCE_PROFILES = frozenset({"mixed", "official", "news", "technical", "reviews", "local"})
+IMAGE_GENERATION_OPERATIONS = frozenset({"create", "edit", "variation"})
+IMAGE_SOURCE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*(?::[A-Za-z0-9_-]+)+$")
+MAX_IMAGE_SOURCE_IDS = 16
 
 
 @dataclass(frozen=True)
 class ImageGenerationBlock:
     needed: bool
     prompt: str = ""
+    operation: str = "create"
+    source_image_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,7 +96,7 @@ def build_repair_instruction() -> str:
     image_generation_enabled = is_image_generation_enabled()
     schema = '{"replyText":"..."'
     if image_generation_enabled:
-        schema += ',"imageGeneration":{"needed":true,"prompt":"..."}'
+        schema += ',"imageGeneration":{"needed":true,"operation":"create|edit|variation","prompt":"...","sourceImageIds":["..."]}'
     schema += ',"memory":{"update":true,"content":"..."},"browser":{"search":{"queries":["..."],"language":"zh-TW","region":"TW","sourceProfile":"mixed","desiredSources":3},"youtubeSearchQuery":"..."}}'
     parts = [
         "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
@@ -107,6 +112,11 @@ def build_repair_instruction() -> str:
     ])
     if image_generation_enabled:
         parts.append("除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。")
+        parts.append(
+            "imageGeneration.operation 使用 create 時不得輸出 sourceImageIds；使用 edit 或 variation 時必須從 "
+            "payload.imageGenerationCandidates 選擇一個或多個 sourceImageIds。若找不到使用者指稱的原圖，"
+            "請在 replyText 要求使用者重新附圖或直接回覆原圖，並省略 imageGeneration。"
+        )
     parts.extend([
         "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.search.queries 的精簡查詢關鍵字；可選擇提供 language、region、timeRange、siteDomains、sourceProfile 與 3 到 5 的 desiredSources；"
         "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser.youtubeSearchQuery；"
@@ -145,7 +155,39 @@ def _parse_image_generation(value) -> ImageGenerationBlock | None:
     if not needed:
         return None
     prompt = _required_text(value.get("prompt"), "imageGeneration.prompt")
-    return ImageGenerationBlock(needed=True, prompt=prompt)
+    operation = str(value.get("operation") or "create").strip().lower()
+    if operation not in IMAGE_GENERATION_OPERATIONS:
+        raise ValueError("imageGeneration.operation must be create, edit, or variation")
+    source_image_ids = _parse_image_source_ids(value.get("sourceImageIds"))
+    if operation == "create" and source_image_ids:
+        raise ValueError("imageGeneration.sourceImageIds must be omitted for create")
+    if operation in {"edit", "variation"} and not source_image_ids:
+        raise ValueError("imageGeneration.sourceImageIds is required for edit or variation")
+    return ImageGenerationBlock(
+        needed=True,
+        prompt=prompt,
+        operation=operation,
+        source_image_ids=source_image_ids,
+    )
+
+
+def _parse_image_source_ids(value) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("imageGeneration.sourceImageIds must be an array")
+    source_ids = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("imageGeneration.sourceImageIds must contain strings")
+        normalized = item.strip()
+        if not IMAGE_SOURCE_ID_PATTERN.fullmatch(normalized):
+            raise ValueError("imageGeneration.sourceImageIds contains an invalid candidate ID")
+        if normalized not in source_ids:
+            source_ids.append(normalized)
+        if len(source_ids) > MAX_IMAGE_SOURCE_IDS:
+            raise ValueError("imageGeneration.sourceImageIds exceeds the maximum")
+    return tuple(source_ids)
 
 
 def _parse_memory(value) -> MemoryBlock | None:
