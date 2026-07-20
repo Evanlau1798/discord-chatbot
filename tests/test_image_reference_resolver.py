@@ -28,27 +28,43 @@ class ImageReferenceResolverTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([item.candidate_id for item in candidates], ["reply:90:0"])
 
-    async def test_recent_image_is_only_loaded_for_previous_image_language(self):
+    async def test_previous_image_language_does_not_load_history_into_initial_request(self):
         recent = _message(80, owner_id=99, attachments=[_attachment(30, "generated.png", b"generated")])
         bot = _bot(messages={80: recent})
         store = _store(records=[_record("80", owner_id="1")])
         resolver = ImageReferenceResolver(bot, store)
         unrelated = _message(100, owner_id=1)
 
-        no_candidates = await resolver.resolve(unrelated, "今天天氣如何")
         candidates = await resolver.resolve(unrelated, "把剛才那張圖片換個姿勢")
 
-        self.assertEqual(no_candidates, [])
-        self.assertEqual([item.candidate_id for item in candidates], ["recent:80:0"])
+        self.assertEqual(candidates, [])
+        self.assertEqual(store.latest_calls, [])
 
-    async def test_recent_lookup_stays_within_requesting_user_and_channel(self):
-        store = _store(records=[])
+    async def test_history_references_expose_ids_without_fetching_image_bytes(self):
+        store = _store(records=[_record("80", owner_id="7", image_count=2, channel_id="55")])
         resolver = ImageReferenceResolver(_bot(), store)
         message = _message(100, owner_id=7, channel_id=55)
 
-        await resolver.resolve(message, "修改上一張圖")
+        references = resolver.list_history_references(message)
 
         self.assertEqual(store.latest_calls[0], ("10", "55", "7"))
+        self.assertEqual(references[0].reference_id, "discord-message:10:55:80")
+        self.assertEqual(references[0].to_prompt_payload()["imageCount"], 2)
+
+    async def test_requested_history_reference_loads_only_allowed_message(self):
+        recent = _message(80, owner_id=99, attachments=[_attachment(30, "generated.png", b"generated")])
+        resolver = ImageReferenceResolver(_bot(messages={80: recent}), _store(records=[_record("80", owner_id="1")]))
+        source_message = _message(100, owner_id=1)
+        references = resolver.list_history_references(source_message)
+
+        candidates = await resolver.resolve_requested(
+            source_message,
+            ("discord-message:10:20:80", "discord-message:10:20:999"),
+            references,
+        )
+
+        self.assertEqual([item.candidate_id for item in candidates], ["history:80:0"])
+        self.assertEqual(candidates[0].data, b"generated")
 
     async def test_discord_message_link_loads_images_from_the_current_guild(self):
         linked = _message(80, owner_id=2, attachments=[_attachment(40, "linked.png", b"linked")])
@@ -87,8 +103,14 @@ def _store(records=None):
     return _Store(records or [])
 
 
-def _record(message_id: str, owner_id: str):
-    return type("Record", (), {"message_id": message_id, "owner_id": owner_id})()
+def _record(message_id: str, owner_id: str, image_count: int = 1, channel_id: str = "20"):
+    return type("Record", (), {
+        "guild_id": "10",
+        "channel_id": channel_id,
+        "message_id": message_id,
+        "owner_id": owner_id,
+        "image_count": image_count,
+    })()
 
 
 class _Bot:

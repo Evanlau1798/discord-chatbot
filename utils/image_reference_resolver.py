@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass
 
 from utils.discord_media_attachments import attachment_mime_type, iter_image_attachments, read_attachment_bytes
@@ -11,13 +10,6 @@ MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_REFERENCE_IMAGES = 4
 MAX_REFERENCE_IMAGES_HARD_LIMIT = 16
 MAX_REPLY_REFERENCE_DEPTH = 10
-PREVIOUS_IMAGE_PATTERN = re.compile(
-    r"(?:上一張|前一張)|"
-    r"(?:之前|剛才|剛剛|上一張|前一張|那張|先前).{0,8}(?:圖|圖片|影像)|"
-    r"(?:圖|圖片|影像).{0,8}(?:之前|剛才|剛剛|上一張|前一張|那張|先前)|"
-    r"\b(?:previous|last|earlier|that)\s+(?:image|picture|photo)\b",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -45,6 +37,18 @@ class ImageReferenceCandidate:
         return {"type": "image_bytes", "image_bytes": {"data": self.data, "mime_type": self.mime_type}}
 
 
+@dataclass(frozen=True)
+class DeferredImageReference:
+    reference_id: str
+    guild_id: str
+    channel_id: str
+    message_id: str
+    image_count: int
+
+    def to_prompt_payload(self) -> dict:
+        return {"messageReferenceId": self.reference_id, "imageCount": self.image_count}
+
+
 class ImageReferenceResolver:
     def __init__(self, bot, store, *, max_candidates: int | None = None):
         self.bot = bot
@@ -57,9 +61,62 @@ class ImageReferenceResolver:
         await self._append_message_images(candidates, seen, message, source="current_attachment", prefix="current")
         await self._append_reply_chain(candidates, seen, message)
         await self._append_linked_messages(candidates, seen, message, dialogue)
-        if PREVIOUS_IMAGE_PATTERN.search(str(dialogue or "")):
-            await self._append_recent_messages(candidates, seen, message)
         return candidates[:self.max_candidates]
+
+    def list_history_references(
+        self,
+        message,
+        *,
+        exclude_message_ids: tuple[str, ...] | list[str] = (),
+    ) -> list[DeferredImageReference]:
+        excluded = {str(value or "").strip() for value in exclude_message_ids}
+        records = self.store.latest(
+            guild_id=_entity_id(getattr(message, "guild", None)) or "@me",
+            channel_id=_entity_id(getattr(message, "channel", None)) or "unknown",
+            owner_id=_entity_id(getattr(message, "author", None)),
+            limit=10,
+        )
+        references = []
+        for record in records:
+            if record.message_id in excluded or not _is_valid_reference_record(record):
+                continue
+            references.append(DeferredImageReference(
+                reference_id=(
+                    f"discord-message:{record.guild_id}:{record.channel_id}:{record.message_id}"
+                ),
+                guild_id=record.guild_id,
+                channel_id=record.channel_id,
+                message_id=record.message_id,
+                image_count=record.image_count,
+            ))
+            if len(references) >= self.max_candidates:
+                break
+        return references
+
+    async def resolve_requested(
+        self,
+        message,
+        requested_ids: tuple[str, ...] | list[str],
+        allowed_references: list[DeferredImageReference] | tuple[DeferredImageReference, ...],
+    ) -> list[ImageReferenceCandidate]:
+        allowed = {reference.reference_id: reference for reference in allowed_references}
+        candidates = []
+        seen = set()
+        for reference_id in requested_ids:
+            reference = allowed.get(str(reference_id or "").strip())
+            if reference is None or len(candidates) >= self.max_candidates:
+                continue
+            historical = await self._fetch_message(reference.channel_id, reference.message_id, message)
+            if historical is None:
+                continue
+            await self._append_message_images(
+                candidates,
+                seen,
+                historical,
+                source="history_request",
+                prefix=f"history:{reference.message_id}",
+            )
+        return candidates
 
     async def _append_reply_chain(self, candidates, seen, source_message) -> None:
         current = source_message
@@ -96,31 +153,6 @@ class ImageReferenceResolver:
                 linked,
                 source="discord_message_link",
                 prefix=f"linked:{message_id}",
-            )
-
-    async def _append_recent_messages(self, candidates, seen, source_message) -> None:
-        records = self.store.latest(
-            guild_id=_entity_id(getattr(source_message, "guild", None)) or "@me",
-            channel_id=_entity_id(getattr(source_message, "channel", None)) or "unknown",
-            owner_id=_entity_id(getattr(source_message, "author", None)),
-            limit=3,
-        )
-        for record in records:
-            if len(candidates) >= self.max_candidates:
-                return
-            recent = await self._fetch_message(
-                _entity_id(getattr(source_message, "channel", None)),
-                record.message_id,
-                source_message,
-            )
-            if recent is None:
-                continue
-            await self._append_message_images(
-                candidates,
-                seen,
-                recent,
-                source="recent_image",
-                prefix=f"recent:{record.message_id}",
             )
 
     async def _append_message_images(self, candidates, seen, message, *, source: str, prefix: str) -> None:
@@ -188,3 +220,11 @@ def _resolve_max_candidates(value: int | None) -> int:
 
 def _entity_id(value) -> str:
     return str(getattr(value, "id", value) or "").strip()
+
+
+def _is_valid_reference_record(record) -> bool:
+    return (
+        (record.guild_id == "@me" or str(record.guild_id).isdigit())
+        and str(record.channel_id).isdigit()
+        and str(record.message_id).isdigit()
+    )

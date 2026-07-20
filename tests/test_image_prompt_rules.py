@@ -33,6 +33,13 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("不得混合", prompt)
         self.assertIn("不可改成從零生圖", prompt)
         self.assertIn("要求使用者重新附圖或直接回覆原圖", prompt)
+        self.assertIn("輸出對來源圖片的語意依賴", prompt)
+        self.assertIn("若完全看不到所有 imageGenerationCandidates", prompt)
+        self.assertIn("基於這張圖畫你做同樣表情和姿勢", prompt)
+        self.assertIn("historicalImageReferences", prompt)
+        self.assertIn("imageReference", prompt)
+        self.assertIn("每輪最多請求一次", prompt)
+        self.assertNotIn("imageOperationConstraint", prompt)
 
     def test_system_prompt_omits_image_generation_protocol_when_disabled(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})
@@ -41,6 +48,7 @@ class ImagePromptRuleTests(unittest.TestCase):
             prompt = PersonaPromptBuilder().build_system_prompt(persona)
 
         self.assertNotIn("imageGeneration", prompt)
+        self.assertNotIn("imageReference", prompt)
         self.assertNotIn("需要生圖", prompt)
 
     def test_system_prompt_requires_fast_browser_search_before_persona_reply(self):
@@ -95,6 +103,8 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("usePersonaIdentity", instruction)
         self.assertIn("人設身份", instruction)
         self.assertIn("edit 需要讓目前人設角色", instruction)
+        self.assertIn("historicalImageReferences", instruction)
+        self.assertIn("imageReference", instruction)
         self.assertNotIn("variation", instruction)
 
     def test_repair_instruction_omits_image_generation_protocol_when_disabled(self):
@@ -102,6 +112,7 @@ class ImagePromptRuleTests(unittest.TestCase):
             instruction = build_repair_instruction()
 
         self.assertNotIn("imageGeneration", instruction)
+        self.assertNotIn("imageReference", instruction)
         self.assertNotIn("生圖", instruction)
 
     def test_repair_instruction_keeps_fast_browser_search_rule(self):

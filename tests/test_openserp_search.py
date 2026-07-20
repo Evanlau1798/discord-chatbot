@@ -63,7 +63,6 @@ class OpenSerpQualityTests(unittest.TestCase):
             ("discord.py changelog", OpenSerpSource("Changelog", "https://discordpy.readthedocs.io/change_log.html", text="a" * 300)),
             ("discord.py changelog", OpenSerpSource("Unrelated", "https://hqtube.xxx/discord", text="b" * 300, cluster_score=9)),
             ("discord.py changelog", OpenSerpSource("Best restaurants", "https://tasteatlas.com/copycat", text="d" * 300, cluster_score=8)),
-            ("discord.py changelog", OpenSerpSource("Self fork changelog", "https://discordpy-self.readthedocs.io/en/latest/changelog", text="e" * 300)),
             ("discord.py changelog", OpenSerpSource("discord.py Release", "https://github.com/Rapptz/discord.py/releases", text="c" * 300)),
         ]
 
@@ -74,9 +73,9 @@ class OpenSerpQualityTests(unittest.TestCase):
             ["https://discordpy.readthedocs.io/change_log.html", "https://github.com/Rapptz/discord.py/releases"],
         )
 
-    def test_selection_keeps_self_fork_when_query_explicitly_requests_it(self):
+    def test_selection_does_not_apply_product_specific_hostname_classifier(self):
         sources = [
-            ("discord.py self changelog", OpenSerpSource("Self fork changelog", "https://discordpy-self.readthedocs.io/changelog", text="e" * 300)),
+            ("discord.py changelog", OpenSerpSource("Discord.py fork changelog", "https://discordpy-self.readthedocs.io/changelog", text="e" * 300)),
         ]
 
         selected = select_reliable_sources(sources, desired_sources=3)

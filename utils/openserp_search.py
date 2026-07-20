@@ -163,7 +163,7 @@ def select_reliable_sources(
     merged: dict[str, tuple[str, OpenSerpSource]] = {}
     for query, source in candidates:
         canonical = canonicalize_source_url(source.url)
-        if not canonical or not source.text.strip() or _is_unsafe_source(canonical) or _is_query_conflict(query, canonical):
+        if not canonical or not source.text.strip() or _is_unsafe_source(canonical):
             continue
         normalized = replace(source, url=canonical)
         if not _is_relevant(query, normalized):
@@ -427,11 +427,6 @@ def _is_unsafe_source(url: str) -> bool:
         return True
     tokens = {token for label in labels for token in re.split(r"[-_]", label) if token}
     return bool(tokens & _UNSAFE_HOST_TOKENS)
-
-
-def _is_query_conflict(query: str, url: str) -> bool:
-    hostname = (urlsplit(url).hostname or "").lower()
-    return "-self" in hostname and "self" not in query.lower().split()
 
 
 def _browser_result(source: OpenSerpSource, queries: list[str]) -> BrowserFetchResult:

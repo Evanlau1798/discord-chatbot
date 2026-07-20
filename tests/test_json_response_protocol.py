@@ -72,6 +72,28 @@ class JsonResponseProtocolBrowserTests(unittest.TestCase):
                 '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"edit","prompt":"draw","sourceImageIds":["../../secret"]}}'
             )
 
+    def test_image_reference_request_parses_without_reply_text(self):
+        parsed = parse_model_response(
+            '{"imageReference":{"messageReferenceIds":["discord-message:10:20:80"]}}'
+        )
+
+        self.assertEqual(parsed.reply_text, "")
+        self.assertEqual(
+            parsed.image_reference.message_reference_ids,
+            ("discord-message:10:20:80",),
+        )
+
+    def test_image_reference_rejects_untrusted_or_combined_tool_requests(self):
+        with self.assertRaisesRegex(ValueError, "invalid ID"):
+            parse_model_response(
+                '{"imageReference":{"messageReferenceIds":["discord-message:10:20:../../secret"]}}'
+            )
+        with self.assertRaisesRegex(ValueError, "cannot be requested together"):
+            parse_model_response(
+                '{"imageReference":{"messageReferenceIds":["discord-message:10:20:80"]},'
+                '"browser":{"searchQuery":"weather"}}'
+            )
+
     def test_structured_openserp_search_options_are_parsed(self):
         parsed = parse_model_response(
             """

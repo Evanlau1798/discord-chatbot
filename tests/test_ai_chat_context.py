@@ -6,7 +6,7 @@ import unittest
 from utils.browser_result_types import BrowserFetchResult
 from utils.ai_chat_context import AiChatContextMixin
 from utils.image_context_cache import CachedImageContext
-from utils.image_reference_resolver import ImageReferenceCandidate
+from utils.image_reference_resolver import DeferredImageReference, ImageReferenceCandidate
 from utils.json_response_protocol import ImageUnderstandingBlock
 from utils.persona_store import Persona, PersonaPromptBuilder
 
@@ -140,6 +140,15 @@ class AiChatContextBrowserPrefetchTests(unittest.IsolatedAsyncioTestCase):
             "",
             [],
             image_candidates=[candidate],
+            historical_image_references=[
+                DeferredImageReference(
+                    reference_id="discord-message:100:200:80",
+                    guild_id="100",
+                    channel_id="200",
+                    message_id="80",
+                    image_count=1,
+                )
+            ],
         )
         content = messages[-1]["content"]
         payload = json.loads(content[0]["text"])["payload"]
@@ -147,8 +156,11 @@ class AiChatContextBrowserPrefetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["imageGenerationCandidates"][0]["id"], "reply:90:0")
         self.assertEqual(payload["imageGenerationCandidates"][0]["visualIndex"], 0)
         self.assertNotIn("data", payload["imageGenerationCandidates"][0])
-        self.assertEqual(payload["imageOperationConstraint"]["requiredOperation"], "edit")
-        self.assertEqual(payload["imageOperationConstraint"]["allowedSourceImageIds"], ["reply:90:0"])
+        self.assertNotIn("imageOperationConstraint", payload)
+        self.assertEqual(
+            payload["historicalImageReferences"][0]["messageReferenceId"],
+            "discord-message:100:200:80",
+        )
         self.assertIn('id="reply:90:0"', content[1]["text"])
         self.assertEqual(content[2]["image_bytes"]["data"], b"reference-image")
 

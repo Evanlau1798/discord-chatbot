@@ -19,7 +19,7 @@ class ImageReferenceStoreTests(unittest.TestCase):
 
         self.assertEqual([record.message_id for record in records], ["100"])
 
-    def test_latest_returns_newest_first_and_excludes_expired_records(self):
+    def test_latest_returns_only_unexpired_records_newest_first(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = ImageReferenceStore(Path(tmp_dir) / "references.db", ttl_seconds=60)
             store.record_ids(guild_id="@me", channel_id="20", message_id="old", owner_id="1", image_count=1, now=1)

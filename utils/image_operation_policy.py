@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
-import unicodedata
 from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
@@ -11,82 +9,38 @@ from utils.json_response_protocol import ParsedAIResponse
 EDIT_REQUEST_FAILED_MESSAGE = "這次無法安全建立圖片編輯請求，請再試一次。"
 MISSING_EDIT_SOURCE_MESSAGE = "找不到你指定的原圖，請重新附圖或直接回覆原圖後再試一次。"
 
-_DIRECT_EDIT_PATTERN = re.compile(
-    r"(?:修圖|改圖|圖片編輯|編輯圖片|照片編輯|編輯照片|擴圖|局部重繪|去背)|"
-    r"\b(?:edit|modify|inpaint|outpaint|retouch)\b",
-    re.IGNORECASE,
-)
-_EDIT_ACTION_PATTERN = re.compile(
-    r"(?:修改|改成|改為|換成|換掉|變成|調整|移除|刪除|去除|加上|加入|補上|延伸|擴展|"
-    r"合併|融合|保留|套用|上色|換背景|參考|仿照|照(?:著)?|依照|根據|使用|採用)|"
-    r"\b(?:change|replace|remove|delete|add|extend|merge|combine|preserve|use|reference)\b",
-    re.IGNORECASE,
-)
-_IMAGE_REFERENCE_PATTERN = re.compile(
-    r"(?:(?:這|那|上|前|原|剛才|剛剛|附件)[一個]?張?(?:圖|圖片|照片|影像))|"
-    r"(?:來源圖|參考圖|原圖|附圖|回覆的圖|回覆圖片)|"
-    r"\b(?:this|that|previous|last|source|attached|reference)\s+(?:image|picture|photo)\b",
-    re.IGNORECASE,
-)
-_EXPLICIT_CREATE_PATTERN = re.compile(
-    r"(?:從零|全新圖片|全新一張|另畫一張|不要參考|不用原圖|不使用原圖)|"
-    r"\b(?:from scratch|brand[- ]new image|without (?:using )?the (?:source|reference) image)\b",
-    re.IGNORECASE,
-)
 _VISUAL_PART_TYPES = frozenset({"image_url", "image_bytes", "video_bytes"})
 
 
 @dataclass(frozen=True)
 class ImageOperationPolicy:
     candidate_ids: tuple[str, ...] = ()
-    requires_edit: bool = False
-    signal: str = "none"
-
-    def to_prompt_payload(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "requiredOperation": "edit",
-            "allowedSourceImageIds": list(self.candidate_ids),
-        }
-        if not self.candidate_ids:
-            payload["missingSourceAction"] = "omit imageGeneration and ask the user to attach or reply to the source image"
-        return payload
 
 
-def infer_image_operation_policy(dialogue: str, candidates: Iterable[Any] = ()) -> ImageOperationPolicy:
-    candidate_ids = _candidate_ids(candidates)
-    normalized = unicodedata.normalize("NFKC", str(dialogue or "")).strip()
-    if not normalized or _EXPLICIT_CREATE_PATTERN.search(normalized):
-        return ImageOperationPolicy(candidate_ids=candidate_ids)
-    if _DIRECT_EDIT_PATTERN.search(normalized):
-        return ImageOperationPolicy(candidate_ids=candidate_ids, requires_edit=True, signal="explicit_image_edit")
-    if _EDIT_ACTION_PATTERN.search(normalized) and (candidate_ids or _IMAGE_REFERENCE_PATTERN.search(normalized)):
-        signal = "candidate_edit_action" if candidate_ids else "referenced_image_edit"
-        return ImageOperationPolicy(candidate_ids=candidate_ids, requires_edit=True, signal=signal)
-    return ImageOperationPolicy(candidate_ids=candidate_ids)
+def build_image_operation_policy(candidates: Iterable[Any] = ()) -> ImageOperationPolicy:
+    return ImageOperationPolicy(candidate_ids=_candidate_ids(candidates))
 
 
 def image_operation_violation(parsed: ParsedAIResponse, policy: ImageOperationPolicy | None) -> str:
     if policy is None or parsed.image_generation is None:
         return ""
     block = parsed.image_generation
-    if policy.requires_edit and block.operation == "create":
-        return "edit_source_missing" if not policy.candidate_ids else "edit_required"
     if block.operation == "edit" and any(source_id not in policy.candidate_ids for source_id in block.source_image_ids):
         return "unknown_source_id"
     return ""
 
 
-def build_image_operation_repair_instruction(policy: ImageOperationPolicy, violation: str) -> str:
+def build_image_operation_repair_instruction(policy: ImageOperationPolicy) -> str:
     candidate_json = json.dumps(list(policy.candidate_ids), ensure_ascii=False)
-    if violation == "edit_source_missing" or not policy.candidate_ids:
+    if not policy.candidate_ids:
         return (
-            "本輪是修改既有圖片的請求，但沒有可用的原圖候選。不得改用 create。"
+            "上一輪 edit 使用了本輪不存在的來源圖片，而且目前沒有可用的圖片候選。"
             "請省略 imageGeneration，並在 replyText 要求使用者重新附圖或直接回覆原圖。"
         )
     return (
-        "上一輪圖片操作不符合本輪約束。本輪是修改既有圖片的請求，imageGeneration.operation 必須是 edit，"
-        f"sourceImageIds 只能從以下候選選擇：{candidate_json}。不得改用 create、不得編造 ID。"
-        "請保留其他有效 JSON 欄位，只修正圖片操作並只輸出單一 JSON 物件。"
+        "上一輪 edit 使用了本輪不存在的來源圖片 ID。"
+        f"sourceImageIds 只能從以下候選選擇：{candidate_json}，不得編造 ID。"
+        "請保留使用者原本的圖片操作意圖與其他有效 JSON 欄位，只修正來源 ID 並輸出單一 JSON 物件。"
     )
 
 

@@ -24,11 +24,7 @@ class ImageReferenceRecord:
 
 
 class ImageReferenceStore:
-    def __init__(
-        self,
-        db_path: str | Path = DEFAULT_IMAGE_REFERENCE_DB_PATH,
-        ttl_seconds: int | None = None,
-    ):
+    def __init__(self, db_path: str | Path = DEFAULT_IMAGE_REFERENCE_DB_PATH, ttl_seconds: int | None = None):
         self.db_path = Path(db_path)
         self.ttl_seconds = _resolve_ttl_seconds(ttl_seconds)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,14 +34,11 @@ class ImageReferenceStore:
         image_count = len(iter_image_attachments(message))
         if image_count <= 0:
             return None
-        guild = getattr(message, "guild", None)
-        channel = getattr(message, "channel", None)
-        author = getattr(message, "author", None)
         return self.record_ids(
-            guild_id=_entity_id(guild) or "@me",
-            channel_id=_entity_id(channel) or "unknown",
+            guild_id=_entity_id(getattr(message, "guild", None)) or "@me",
+            channel_id=_entity_id(getattr(message, "channel", None)) or "unknown",
             message_id=_entity_id(message),
-            owner_id=_entity_id(owner_id) or _entity_id(author),
+            owner_id=_entity_id(owner_id) or _entity_id(getattr(message, "author", None)),
             image_count=image_count,
             now=now,
         )
@@ -165,5 +158,4 @@ def _resolve_ttl_seconds(value: int | None) -> int:
 
 
 def _entity_id(value) -> str:
-    raw_value = getattr(value, "id", value)
-    return str(raw_value or "").strip()
+    return str(getattr(value, "id", value) or "").strip()

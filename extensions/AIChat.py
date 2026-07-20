@@ -12,11 +12,14 @@ from utils.EmbedMessage import SakuraEmbedMsg
 from utils.ai_chat_browser import format_browser_notice_targets
 from utils.ai_chat_browser_flow import AiChatBrowserFlowMixin
 from utils.ai_chat_concurrency import AiChatRequestLimiter
+from utils.ai_chat_diagnostics import log_image_operation, user_error_message
 from utils.ai_chat_settings import AiChatUserSettingsStore
 from utils.ai_chat_context import AiChatContextMixin, MAX_CHAT_TURNS
 from utils.ai_chat_image_flow import AiChatImageFlowMixin
-from utils.ai_imagine_client import ImagineAPIError
-from utils.chat_client import ChatAPIError
+from utils.ai_chat_image_reference_flow import (
+    AiChatImageReferenceFlowMixin,
+    build_image_reference_failure_response,
+)
 from utils.chat_client_factory import create_chat_client
 from utils.discord_notice_timing import MIN_BROWSER_NOTICE_DISPLAY_SECONDS, wait_for_min_notice_display
 from utils.discord_files import send_content_with_files
@@ -26,9 +29,9 @@ from utils.discord_status_notice import delete_notice, edit_notice, format_queue
 from utils.image_context_cache import ImageContextCache
 from utils.image_operation_policy import (
     ImageOperationPolicy,
+    build_image_operation_policy,
     build_image_operation_repair_instruction,
     image_operation_violation,
-    infer_image_operation_policy,
     suppress_unsafe_image_operation,
 )
 from utils.image_reference_resolver import ImageReferenceResolver
@@ -51,7 +54,13 @@ LOADING_EMOJI = "<a:loading:1303077872805744650>"
 VIDEO_PROCESSING_STATUS = f"-# {LOADING_EMOJI} 幀在處理影片文字"
 
 
-class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, commands.Cog):
+class AiChat(
+    AiChatImageFlowMixin,
+    AiChatImageReferenceFlowMixin,
+    AiChatBrowserFlowMixin,
+    AiChatContextMixin,
+    commands.Cog,
+):
     def __init__(self, bot):
         self.bot: discord.Bot = bot
         self.user_history = self.load_user_history()
@@ -141,7 +150,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                     await message.reply(
                         embed=SakuraEmbedMsg(
                             title="訊息無法傳送",
-                            description=_user_error_message(exc),
+                            description=user_error_message(exc),
                         ),
                         mention_author=False,
                     )
@@ -173,10 +182,15 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                 server_participants=server_participants,
             )
             image_candidates = []
+            historical_image_references = []
             resolver = getattr(self, "image_reference_resolver", None)
-            if resolver is not None:
+            if resolver is not None and self.image_generation_enabled:
                 image_candidates = await resolver.resolve(message, dialogue)
-            image_operation_policy = infer_image_operation_policy(dialogue, image_candidates)
+                historical_image_references = resolver.list_history_references(
+                    message,
+                    exclude_message_ids=[candidate.message_id for candidate in image_candidates],
+                )
+            image_operation_policy = build_image_operation_policy(image_candidates)
             request_messages = await self._build_request_messages(
                 message,
                 dialogue,
@@ -185,7 +199,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                 memory,
                 server_history,
                 image_candidates=image_candidates,
-                image_operation_policy=image_operation_policy,
+                historical_image_references=historical_image_references,
             )
             persona_key = persona.key if persona is not None else None
             parsed, raw_response = await self._complete_and_parse_with_raw(
@@ -195,6 +209,19 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                 request_status,
                 image_operation_policy=image_operation_policy,
             )
+            if parsed.image_reference is not None:
+                parsed, raw_response, request_messages, image_candidates, image_operation_policy = (
+                    await self._complete_after_image_reference(
+                        request_messages,
+                        raw_response,
+                        parsed,
+                        message,
+                        persona_key,
+                        request_status,
+                        image_candidates,
+                        historical_image_references,
+                    )
+                )
             browser_notice = None
             browser_used = False
             if parsed.browser is not None:
@@ -213,6 +240,8 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                     request_status,
                     image_operation_policy=image_operation_policy,
                 )
+                if parsed.image_reference is not None:
+                    parsed = build_image_reference_failure_response()
             image_status_message = None
             image_rate_limited_until = None
             image_quota_status = None
@@ -285,21 +314,16 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
             parsed = None
         violation = image_operation_violation(parsed, image_operation_policy) if parsed is not None else ""
         if parsed is not None and not violation:
-            _log_image_operation(parsed, image_operation_policy)
+            log_image_operation(parsed, image_operation_policy)
             return parsed, response.visible_content
         repair_reason = violation or "invalid_json"
         repair_instruction = build_repair_instruction()
-        if image_operation_policy is not None and image_operation_policy.requires_edit:
-            policy_violation = violation or ("edit_source_missing" if not image_operation_policy.candidate_ids else "edit_required")
-            repair_instruction += build_image_operation_repair_instruction(
-                image_operation_policy,
-                policy_violation,
-            )
+        if violation and image_operation_policy is not None:
+            repair_instruction += build_image_operation_repair_instruction(image_operation_policy)
         logger.info(
-            "ai_chat.response_repair reason=%s candidate_count=%s edit_required=%s",
+            "ai_chat.response_repair reason=%s candidate_count=%s",
             repair_reason,
             len(image_operation_policy.candidate_ids) if image_operation_policy else 0,
-            bool(image_operation_policy and image_operation_policy.requires_edit),
         )
         repair_messages = messages + [
             {"role": "assistant", "content": response.visible_content},
@@ -322,7 +346,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                 len(image_operation_policy.candidate_ids),
             )
             repaired = suppress_unsafe_image_operation(repaired, image_operation_policy)
-        _log_image_operation(repaired, image_operation_policy)
+        log_image_operation(repaired, image_operation_policy)
         return repaired, repair_response.visible_content
 
     async def _complete_with_retry(
@@ -467,32 +491,6 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
         if persona is None:
             raise ValueError(f"找不到人設: {normalized}")
         return persona.key
-
-
-def _log_image_operation(parsed, policy: ImageOperationPolicy | None) -> None:
-    block = parsed.image_generation
-    logger.info(
-        "ai_chat.image_operation_selected operation=%s candidate_count=%s selected_source_count=%s edit_required=%s intent_signal=%s",
-        block.operation if block else "none",
-        len(policy.candidate_ids) if policy else 0,
-        len(block.source_image_ids) if block else 0,
-        bool(policy and policy.requires_edit),
-        policy.signal if policy else "none",
-    )
-
-
-def _user_error_message(exc: Exception) -> str:
-    if isinstance(exc, ImagineAPIError):
-        return "圖片生成服務暫時不可用，請稍後再試一次。"
-    if isinstance(exc, ChatAPIError):
-        if exc.status_code in {400, 413, 415, 422}:
-            return "所選模型無法處理這個請求或附件，請確認模型支援目前的文字與多模態輸入。"
-        if exc.status_code in {401, 403, 404}:
-            return "模型服務設定或驗證失敗，請聯絡管理員檢查 provider、model 與 API key。"
-        return "模型服務目前忙碌或暫時不可用，請稍後再試一次。"
-    if isinstance(exc, (ValueError, RuntimeError)):
-        return str(exc)
-    return "系統處理訊息時發生未預期錯誤，請稍後再試一次。"
 
 
 def setup(bot: discord.Bot):

@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from extensions import AIChat as ai_chat_module
-from extensions.AIChat import AiChat, LOADING_EMOJI, _user_error_message
+from extensions.AIChat import AiChat, LOADING_EMOJI
+from utils.ai_chat_diagnostics import user_error_message
 from utils.chat_client import ChatAPIError
 from utils.discord_request_status import DiscordRequestStatus
 
@@ -72,7 +73,7 @@ class AiChatRetryStatusTests(unittest.IsolatedAsyncioTestCase):
     async def test_multimodal_provider_rejection_has_an_actionable_message(self):
         error = ChatAPIError("provider rejected input", provider="test", status_code=422)
 
-        message = _user_error_message(error)
+        message = user_error_message(error)
 
         self.assertIn("模型無法處理", message)
         self.assertIn("多模態", message)

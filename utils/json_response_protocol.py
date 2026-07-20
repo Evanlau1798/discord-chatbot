@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from utils.imagine_config import is_image_generation_enabled
 from utils.openserp_search import SearchOptions
+from utils.response_repair_prompt import build_repair_instruction
 
 CODE_BLOCK_PATTERN = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 FALLBACK_REPLY = "回覆格式不合法，這次無法正確處理模型回應。"
@@ -17,7 +17,9 @@ SEARCH_FAILURE_REPLY = (
 SEARCH_SOURCE_PROFILES = frozenset({"mixed", "official", "news", "technical", "reviews", "local"})
 IMAGE_GENERATION_OPERATIONS = frozenset({"create", "edit"})
 IMAGE_SOURCE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*(?::[A-Za-z0-9_-]+)+$")
+MESSAGE_REFERENCE_ID_PATTERN = re.compile(r"^discord-message:(?:@me|\d+):\d+:\d+$")
 MAX_IMAGE_SOURCE_IDS = 16
+MAX_MESSAGE_REFERENCE_IDS = 4
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,11 @@ class ImageUnderstandingBlock:
     summary: str
     visible_text: tuple[str, ...] = ()
     details: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ImageReferenceRequest:
+    message_reference_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,7 @@ class ParsedAIResponse:
     memory: MemoryBlock | None = None
     browser: BrowserBlock | None = None
     image_understanding: ImageUnderstandingBlock | None = None
+    image_reference: ImageReferenceRequest | None = None
 
 
 def parse_model_response(text: str) -> ParsedAIResponse:
@@ -93,53 +101,19 @@ def build_search_failure_response() -> ParsedAIResponse:
     return ParsedAIResponse(reply_text=SEARCH_FAILURE_REPLY)
 
 
-def build_repair_instruction() -> str:
-    image_generation_enabled = is_image_generation_enabled()
-    schema = '{"replyText":"..."'
-    if image_generation_enabled:
-        schema += ',"imageGeneration":{"needed":true,"operation":"create|edit","prompt":"...","sourceImageIds":["..."],"usePersonaIdentity":false}'
-    schema += ',"memory":{"update":true,"content":"..."},"browser":{"search":{"queries":["..."],"language":"zh-TW","region":"TW","sourceProfile":"mixed","desiredSources":3},"youtubeSearchQuery":"..."}}'
-    parts = [
-        "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
-        f"格式固定為 {schema}。",
-        "replyText 內需要提供 URL 時，請使用 Discord Markdown 格式 [有意義的顯示文字](https://example.com)，"
-        "連結 URL 必須是實際來源，不要放在反引號中。",
-    ]
-    if image_generation_enabled:
-        parts.append("不需要生圖時省略 imageGeneration；")
-    parts.extend([
-        "不需要更新記憶時省略 memory；不需要上網時省略 browser。"
-        "如果目前請求或前一輪請求包含圖片，請加入 imageUnderstanding: {\"summary\":\"...\",\"visibleText\":[\"...\"],\"details\":[\"...\"]}。"
-    ])
-    if image_generation_enabled:
-        parts.append("除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。")
-        parts.append(
-            "imageGeneration.operation 使用 create 時不得輸出 sourceImageIds；使用 edit 時必須從 "
-            "payload.imageGenerationCandidates 選擇一個或多個 sourceImageIds。若找不到使用者指稱的原圖，"
-            "請在 replyText 要求使用者重新附圖或直接回覆原圖，並省略 imageGeneration。"
-        )
-        parts.append(
-            "edit 需要讓目前人設角色出現在結果中時，設定 usePersonaIdentity: true；"
-            "人設身份必須優先於來源圖片中的人物特徵且不得混合。一般圖片修改則省略或設為 false。"
-        )
-    parts.extend([
-        "需要網頁搜尋或最新資料時，不要先輸出 replyText，直接輸出 browser.search.queries 的精簡查詢關鍵字；可選擇提供 language、region、timeRange、siteDomains、sourceProfile 與 3 到 5 的 desiredSources；"
-        "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser.youtubeSearchQuery；"
-        "收到 browserResults 後才輸出具有人設語氣的 replyText。"
-        "若前一輪需要搜尋海外人物、遊戲、實況主、影片、梗圖或片段，請使用英文別名、常見英文說法與最多三個查詢關鍵字，"
-        "不要只輸出使用者原文；第一個 query 必須是可單獨執行的最精準主查詢。"
-        "若使用者指定 YouTube 或影片，請使用 browser.youtubeSearchQuery 並加入可能的英文標題線索。"
-        "除非使用者明確提供 URL，否則上網請優先使用 browser.searchQuery；"
-        "需要在指定網頁中尋找文字時可用 browser.find: {\"url\":\"...\",\"pattern\":\"...\"}。"
-        "需要查看指定網頁內圖片時，可在 browser 中加入 includeImages: true。"
-    ])
-    return "".join(parts)
-
-
 def validate_payload(payload: dict[str, Any]) -> ParsedAIResponse:
     browser = _parse_browser(payload.get("browser"))
-    reply_text = _optional_text(payload.get("replyText")) if browser is not None else _required_text(payload.get("replyText"), "replyText")
+    image_reference = _parse_image_reference(payload.get("imageReference"))
+    if browser is not None and image_reference is not None:
+        raise ValueError("browser and imageReference cannot be requested together")
+    reply_text = (
+        _optional_text(payload.get("replyText"))
+        if browser is not None or image_reference is not None
+        else _required_text(payload.get("replyText"), "replyText")
+    )
     image_generation = _parse_image_generation(payload.get("imageGeneration"))
+    if image_reference is not None and image_generation is not None:
+        raise ValueError("imageReference and imageGeneration cannot be requested together")
     memory = _parse_memory(payload.get("memory"))
     image_understanding = _parse_image_understanding(payload.get("imageUnderstanding"))
     return ParsedAIResponse(
@@ -148,7 +122,28 @@ def validate_payload(payload: dict[str, Any]) -> ParsedAIResponse:
         memory=memory,
         browser=browser,
         image_understanding=image_understanding,
+        image_reference=image_reference,
     )
+
+
+def _parse_image_reference(value) -> ImageReferenceRequest | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("imageReference must be an object")
+    raw_ids = value.get("messageReferenceIds")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise ValueError("imageReference.messageReferenceIds must be a non-empty array")
+    reference_ids = []
+    for item in raw_ids:
+        normalized = str(item or "").strip() if isinstance(item, str) else ""
+        if not MESSAGE_REFERENCE_ID_PATTERN.fullmatch(normalized):
+            raise ValueError("imageReference.messageReferenceIds contains an invalid ID")
+        if normalized not in reference_ids:
+            reference_ids.append(normalized)
+        if len(reference_ids) > MAX_MESSAGE_REFERENCE_IDS:
+            raise ValueError("imageReference.messageReferenceIds exceeds the maximum")
+    return ImageReferenceRequest(tuple(reference_ids))
 
 
 def _parse_image_generation(value) -> ImageGenerationBlock | None:
