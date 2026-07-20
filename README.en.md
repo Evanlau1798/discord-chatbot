@@ -162,7 +162,8 @@ Run `./start_openserp.sh` to use the official stable release `0.8.6`, pinned by 
 YouTube search continues to use its separate `yt-dlp` queue, with one query per turn and a one-second request interval by default.
 
 To enable image generation, set `AI_IMAGINE_ENABLED=1`, `AI_IMAGINE_BASE_URL`, `AI_IMAGINE_API_KEY`, and `AI_IMAGINE_MODEL` in `.env`. When disabled, the bot does not ask the model to output `imageGeneration`.
-Image quota is disabled by default in the open-source repo. Set `AI_IMAGINE_RATE_LIMIT_ENABLED=1` to enable it. Each account then starts its own 24-hour window after a successful image generation, with 3 uses by default. Configure the limit and whitelist with `AI_IMAGINE_DAILY_LIMIT` and `AI_IMAGINE_RATE_LIMIT_WHITELIST`; set `IMAGINE_QUOTA_ADMIN_USER_ID` to the Discord user id allowed to reset all image quotas.
+The drawing protocol accepts only explicit `create` or `edit` operations. Obvious edit requests are bound to trusted candidate image IDs. If the model incorrectly returns `create`, the bot permits one constrained repair attempt; a second violation cancels the image action instead of falling back to generation from scratch.
+Image quota protection is configured by default but remains inactive while image generation is disabled. Once enabled, each account starts its own 24-hour window after a successful image generation, with 3 uses by default. Configure the limit and whitelist with `AI_IMAGINE_DAILY_LIMIT` and `AI_IMAGINE_RATE_LIMIT_WHITELIST`; set `IMAGINE_QUOTA_ADMIN_USER_ID` to the Discord user id allowed to reset all image quotas.
 
 For private personas, use an ignored filename such as `persona/my.private.json`, then set `DEFAULT_PERSONA_KEY` in `.env` to the file key without `.json`. Do not commit unlicensed scripts, transcripts, or character text to a public repo.
 

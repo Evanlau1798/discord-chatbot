@@ -6,14 +6,11 @@ from utils.json_response_protocol import BrowserFindRequest, ImageUnderstandingB
 
 
 class JsonResponseProtocolBrowserTests(unittest.TestCase):
-    def test_image_generation_defaults_to_create_for_legacy_payload(self):
-        parsed = parse_model_response(
-            '{"replyText":"好。","imageGeneration":{"needed":true,"prompt":"draw a cat"}}'
-        )
-
-        self.assertEqual(parsed.image_generation.operation, "create")
-        self.assertEqual(parsed.image_generation.source_image_ids, ())
-        self.assertFalse(parsed.image_generation.use_persona_identity)
+    def test_image_generation_requires_explicit_operation(self):
+        with self.assertRaisesRegex(ValueError, "imageGeneration.operation"):
+            parse_model_response(
+                '{"replyText":"好。","imageGeneration":{"needed":true,"prompt":"draw a cat"}}'
+            )
 
     def test_image_edit_parses_deduped_source_candidate_ids(self):
         parsed = parse_model_response(

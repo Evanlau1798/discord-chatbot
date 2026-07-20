@@ -24,6 +24,13 @@ from utils.discord_presence import keep_typing
 from utils.discord_request_status import DiscordRequestStatus
 from utils.discord_status_notice import delete_notice, edit_notice, format_queue_notice_content
 from utils.image_context_cache import ImageContextCache
+from utils.image_operation_policy import (
+    ImageOperationPolicy,
+    build_image_operation_repair_instruction,
+    image_operation_violation,
+    infer_image_operation_policy,
+    suppress_unsafe_image_operation,
+)
 from utils.image_reference_resolver import ImageReferenceResolver
 from utils.image_reference_store import ImageReferenceStore
 from utils.imagine_config import is_image_generation_enabled
@@ -169,6 +176,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
             resolver = getattr(self, "image_reference_resolver", None)
             if resolver is not None:
                 image_candidates = await resolver.resolve(message, dialogue)
+            image_operation_policy = infer_image_operation_policy(dialogue, image_candidates)
             request_messages = await self._build_request_messages(
                 message,
                 dialogue,
@@ -177,10 +185,15 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                 memory,
                 server_history,
                 image_candidates=image_candidates,
+                image_operation_policy=image_operation_policy,
             )
             persona_key = persona.key if persona is not None else None
             parsed, raw_response = await self._complete_and_parse_with_raw(
-                request_messages, message, persona_key, request_status
+                request_messages,
+                message,
+                persona_key,
+                request_status,
+                image_operation_policy=image_operation_policy,
             )
             browser_notice = None
             browser_used = False
@@ -198,6 +211,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                     message,
                     persona_key,
                     request_status,
+                    image_operation_policy=image_operation_policy,
                 )
             image_status_message = None
             image_rate_limited_until = None
@@ -262,24 +276,54 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
         message: discord.Message,
         persona_key: str | None,
         request_status: DiscordRequestStatus | None = None,
+        image_operation_policy: ImageOperationPolicy | None = None,
     ):
         response = await self._complete_with_retry(messages, message, persona_key, request_status)
         try:
-            return parse_model_response(response.visible_content), response.visible_content
+            parsed = parse_model_response(response.visible_content)
         except ValueError:
-            repair_messages = messages + [
-                {"role": "assistant", "content": response.visible_content},
-                {"role": "user", "content": build_repair_instruction()},
-            ]
-            repair_response = await self._complete_with_retry(repair_messages, message, persona_key, request_status)
-            try:
-                return parse_model_response(repair_response.visible_content), repair_response.visible_content
-            except ValueError:
-                logger.warning(
-                    "ai_chat.invalid_json_response content_chars=%s",
-                    len(repair_response.visible_content or ""),
-                )
-                return build_fallback_response(), repair_response.visible_content
+            parsed = None
+        violation = image_operation_violation(parsed, image_operation_policy) if parsed is not None else ""
+        if parsed is not None and not violation:
+            _log_image_operation(parsed, image_operation_policy)
+            return parsed, response.visible_content
+        repair_reason = violation or "invalid_json"
+        repair_instruction = build_repair_instruction()
+        if image_operation_policy is not None and image_operation_policy.requires_edit:
+            policy_violation = violation or ("edit_source_missing" if not image_operation_policy.candidate_ids else "edit_required")
+            repair_instruction += build_image_operation_repair_instruction(
+                image_operation_policy,
+                policy_violation,
+            )
+        logger.info(
+            "ai_chat.response_repair reason=%s candidate_count=%s edit_required=%s",
+            repair_reason,
+            len(image_operation_policy.candidate_ids) if image_operation_policy else 0,
+            bool(image_operation_policy and image_operation_policy.requires_edit),
+        )
+        repair_messages = messages + [
+            {"role": "assistant", "content": response.visible_content},
+            {"role": "user", "content": repair_instruction},
+        ]
+        repair_response = await self._complete_with_retry(repair_messages, message, persona_key, request_status)
+        try:
+            repaired = parse_model_response(repair_response.visible_content)
+        except ValueError:
+            logger.warning(
+                "ai_chat.invalid_json_response content_chars=%s",
+                len(repair_response.visible_content or ""),
+            )
+            return build_fallback_response(), repair_response.visible_content
+        repaired_violation = image_operation_violation(repaired, image_operation_policy)
+        if repaired_violation and image_operation_policy is not None:
+            logger.warning(
+                "ai_chat.image_operation_repair_rejected reason=%s candidate_count=%s",
+                repaired_violation,
+                len(image_operation_policy.candidate_ids),
+            )
+            repaired = suppress_unsafe_image_operation(repaired, image_operation_policy)
+        _log_image_operation(repaired, image_operation_policy)
+        return repaired, repair_response.visible_content
 
     async def _complete_with_retry(
         self,
@@ -423,6 +467,19 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
         if persona is None:
             raise ValueError(f"找不到人設: {normalized}")
         return persona.key
+
+
+def _log_image_operation(parsed, policy: ImageOperationPolicy | None) -> None:
+    block = parsed.image_generation
+    logger.info(
+        "ai_chat.image_operation_selected operation=%s candidate_count=%s selected_source_count=%s edit_required=%s intent_signal=%s",
+        block.operation if block else "none",
+        len(policy.candidate_ids) if policy else 0,
+        len(block.source_image_ids) if block else 0,
+        bool(policy and policy.requires_edit),
+        policy.signal if policy else "none",
+    )
+
 
 def _user_error_message(exc: Exception) -> str:
     if isinstance(exc, ImagineAPIError):

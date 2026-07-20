@@ -15,6 +15,12 @@ from utils.image_context_cache import (
     image_context_to_history_note,
     message_context_key_from_message,
 )
+from utils.image_operation_policy import (
+    ImageOperationPolicy,
+    build_candidate_prompt_payloads,
+    infer_image_operation_policy,
+    label_candidate_content_parts,
+)
 from utils.browser_prefetch import prefetch_explicit_web_urls
 from utils.browser_result_payload import build_inline_browser_context, collect_browser_result_image_urls
 from utils.discord_context_payload import build_attachment_payload, build_embed_payload
@@ -299,6 +305,7 @@ class AiChatContextMixin:
         memory,
         server_history: list[dict] | None = None,
         image_candidates: list | tuple = (),
+        image_operation_policy: ImageOperationPolicy | None = None,
     ) -> list[dict]:
         system_prompt = self.prompt_builder.build_system_prompt(persona)
         display_name = self._message_author_display_name(message)
@@ -332,21 +339,24 @@ class AiChatContextMixin:
             payload_content["attachments"] = current_attachments
         if current_embeds:
             payload_content["embeds"] = current_embeds
+        operation_policy = image_operation_policy or infer_image_operation_policy(dialogue, image_candidates)
         if image_candidates:
-            payload_content["imageGenerationCandidates"] = [
-                candidate.to_prompt_payload() for candidate in image_candidates
-            ]
+            payload_content["imageGenerationCandidates"] = build_candidate_prompt_payloads(
+                image_candidates,
+                media.content_parts,
+            )
+        if operation_policy.requires_edit:
+            payload_content["imageOperationConstraint"] = operation_policy.to_prompt_payload()
         if media.image_urls:
             payload_content["imageUrls"] = media.image_urls
         if media.diagnostics:
             payload_content["mediaDiagnostics"] = media.diagnostics
         if prefetched_results:
             payload_content["prefetchedBrowserContext"] = build_inline_browser_context(prefetched_results)
-        candidate_parts = [
-            candidate.to_content_part()
-            for candidate in image_candidates
-            if getattr(candidate, "source", "") != "current_attachment"
-        ]
+        labeled_media_parts, candidate_parts = label_candidate_content_parts(
+            image_candidates,
+            media.content_parts,
+        )
         has_visual_media = bool(image_candidates or media.image_urls or prefetched_image_urls or any(
             part.get("type") in {"image_url", "image_bytes", "video_bytes"} for part in media.content_parts
         ))
@@ -363,7 +373,7 @@ class AiChatContextMixin:
         content = build_multimodal_content(
             json.dumps(payload, ensure_ascii=False),
             image_urls=prefetched_image_urls,
-            image_parts=[*media.content_parts, *candidate_parts],
+            image_parts=[*labeled_media_parts, *candidate_parts],
         )
         return [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": content}]
 

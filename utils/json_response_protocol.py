@@ -160,7 +160,7 @@ def _parse_image_generation(value) -> ImageGenerationBlock | None:
     if not needed:
         return None
     prompt = _required_text(value.get("prompt"), "imageGeneration.prompt")
-    operation = str(value.get("operation") or "create").strip().lower()
+    operation = _required_text(value.get("operation"), "imageGeneration.operation").lower()
     if operation not in IMAGE_GENERATION_OPERATIONS:
         raise ValueError("imageGeneration.operation must be create or edit")
     source_image_ids = _parse_image_source_ids(value.get("sourceImageIds"))

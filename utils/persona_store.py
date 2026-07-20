@@ -172,6 +172,10 @@ def _image_rules() -> str:
     return (
         "若使用者要求畫圖、生圖、插圖、概念圖或視覺設計，請在 imageGeneration.prompt 放入適合生圖模型的英文 prompt。"
         "payload.imageGenerationCandidates 是本輪可安全用於繪圖的圖片候選，每個候選都有不可自行編造的 id。"
+        "候選的 visualIndex 是從 0 開始的本輪多模態視覺輸入順序，用來辨認 id 對應的實際圖片。"
+        "多模態內容中緊鄰圖片前的 trusted_image_candidate 標籤提供可信 id 對應，應以該相鄰標籤選圖。"
+        "若 payload.imageOperationConstraint 存在，必須遵守 requiredOperation 與 allowedSourceImageIds；"
+        "候選為空時依 missingSourceAction 處理，不得降級成 create。"
         "純文字從零生圖使用 operation=create。只要使用者要求修改、延伸、合併、參考本輪附件、回覆圖片、"
         "Discord 訊息連結圖片或明確提到之前的候選圖片，就使用 operation=edit 並列出實際 sourceImageIds。"
         "使用者要求以既有圖片再做一張相似版本時也使用 operation=edit 並列出 sourceImageIds。"

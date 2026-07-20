@@ -145,8 +145,12 @@ class AiChatContextBrowserPrefetchTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(content[0]["text"])["payload"]
 
         self.assertEqual(payload["imageGenerationCandidates"][0]["id"], "reply:90:0")
+        self.assertEqual(payload["imageGenerationCandidates"][0]["visualIndex"], 0)
         self.assertNotIn("data", payload["imageGenerationCandidates"][0])
-        self.assertEqual(content[1]["image_bytes"]["data"], b"reference-image")
+        self.assertEqual(payload["imageOperationConstraint"]["requiredOperation"], "edit")
+        self.assertEqual(payload["imageOperationConstraint"]["allowedSourceImageIds"], ["reply:90:0"])
+        self.assertIn('id="reply:90:0"', content[1]["text"])
+        self.assertEqual(content[2]["image_bytes"]["data"], b"reference-image")
 
     async def test_request_messages_prefetch_explicit_web_url_into_payload(self):
         browser_client = FakeBrowserClient([
