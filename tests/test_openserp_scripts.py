@@ -35,6 +35,15 @@ class OpenSerpScriptTests(unittest.TestCase):
         self.assertNotIn("git fetch", text)
         self.assertNotIn("git clone", text)
 
+    def test_run_bot_checks_memory_key_before_stopping_services(self):
+        text = (ROOT / "run_bot.sh").read_text(encoding="utf-8")
+
+        self.assertIn('MEMORY_KEY_SETUP_SCRIPT="$PROJECT_DIR/utils/memory_key_setup.py"', text)
+        self.assertIn("ensure_memory_encryption_key", text)
+        self.assertIn("[Y/n]", text)
+        self.assertLess(text.index("ensure_memory_encryption_key\nstop_bot"), text.index('echo "Stopping existing OpenVINO'))
+        self.assertNotIn("MEMORY_ENCRYPTION_KEY=", text)
+
     def test_stop_script_targets_only_project_container(self):
         text = (ROOT / "stop_openserp.sh").read_text(encoding="utf-8")
 

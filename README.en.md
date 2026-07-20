@@ -98,6 +98,8 @@ GEMINI_API_KEY=...
 MEMORY_ENCRYPTION_KEY=...
 ```
 
+When using `./run_bot.sh`, `MEMORY_ENCRYPTION_KEY` may remain blank for the first interactive start. Before stopping or starting any service, the script offers to generate a secure key and save it to `.env`. Non-interactive runs never generate a key or wait for input; configure it beforehand. Back up and retain the same key because replacing it makes existing encrypted memories unreadable.
+
 `AI_CHAT_PROVIDER` accepts `gemini`, `nvidia`, or `openai_compatible`. Gemini remains the default when it is unset.
 
 NVIDIA API Catalog defaults to `https://integrate.api.nvidia.com/v1`; the base URL may also point to a self-hosted NIM:
@@ -123,7 +125,7 @@ OPENAI_COMPAT_MODEL=model-id
 
 Images are sent as standard `image_url` or base64 data URLs. Videos are sampled and presented as contact sheets. The selected model must support vision input or the provider will return a model error. Exhausting retries never sends the conversation to another provider automatically.
 
-Generate `MEMORY_ENCRYPTION_KEY`:
+If you do not use `run_bot.sh`, generate `MEMORY_ENCRYPTION_KEY` manually:
 
 ```bash
 python - <<'PY'
@@ -169,17 +171,13 @@ For private personas, use an ignored filename such as `persona/my.private.json`,
 
 ## Run
 
-Start directly:
+The integrated startup script is recommended. It validates the encryption key, restarts this project's OpenSERP and bot, then starts OpenVINO ASR after the Discord Gateway is ready:
 
 ```bash
-python main.py
+./run_bot.sh
 ```
 
-Or use the tmux startup script:
-
-```bash
-./start_bot_tmux.sh
-```
+Running `python main.py` directly requires a valid `MEMORY_ENCRYPTION_KEY` in `.env` and does not manage local companion services.
 
 ## Discord Commands
 

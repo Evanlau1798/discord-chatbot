@@ -98,6 +98,8 @@ GEMINI_API_KEY=...
 MEMORY_ENCRYPTION_KEY=...
 ```
 
+若使用 `./run_bot.sh`，`MEMORY_ENCRYPTION_KEY` 初次可保持空白；腳本會在停止或啟動任何服務前詢問是否安全產生並寫回 `.env`。非互動環境不會自動產生或等待輸入，必須預先設定。請備份並長期保留同一把 key；更換後，既有加密記憶將無法解密。
+
 `AI_CHAT_PROVIDER` 支援 `gemini`、`nvidia` 與 `openai_compatible`。未設定時維持使用 Gemini。
 
 NVIDIA API Catalog 預設使用 `https://integrate.api.nvidia.com/v1`，也可以把 base URL 指向自架 NIM：
@@ -123,7 +125,7 @@ OPENAI_COMPAT_MODEL=模型 ID
 
 圖片會以標準 `image_url` 或 base64 data URL 傳送，影片則先抽幀並整理為 contact sheet。所選模型必須支援視覺輸入，否則服務會回報模型錯誤。模型來源重試失敗後不會自動把對話送往其他 provider。
 
-產生 `MEMORY_ENCRYPTION_KEY`：
+若不使用 `run_bot.sh`，可手動產生 `MEMORY_ENCRYPTION_KEY`：
 
 ```bash
 python - <<'PY'
@@ -169,11 +171,13 @@ YouTube 影片搜尋仍使用獨立的 `yt-dlp` queue，預設每輪只執行 1 
 
 ## 啟動
 
-直接啟動：
+建議使用整合啟動腳本；它會檢查加密 key、重啟本專案的 OpenSERP 與 bot，並在 Discord Gateway ready 後啟動 OpenVINO ASR：
 
 ```bash
-python main.py
+./run_bot.sh
 ```
+
+若直接執行 `python main.py`，必須事先在 `.env` 設定合法的 `MEMORY_ENCRYPTION_KEY`，且不會自動管理本機 companion services。
 
 ## Discord 指令
 

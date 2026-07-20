@@ -1,7 +1,6 @@
 # 只能新增，不可移除排除項目
 .env
 AGENTS.md
-run_bot.sh
 start_searxng.sh
 stop_searxng.sh
 tmp/
