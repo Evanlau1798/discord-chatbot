@@ -50,10 +50,11 @@ class JsonResponseProtocolBrowserTests(unittest.TestCase):
                 '"prompt":"draw","sourceImageIds":["current:0"],"usePersonaIdentity":"yes"}}'
             )
 
-    def test_image_variation_requires_a_source_candidate(self):
-        with self.assertRaisesRegex(ValueError, "sourceImageIds"):
+    def test_image_variation_is_rejected_as_an_unsupported_operation(self):
+        with self.assertRaisesRegex(ValueError, "operation"):
             parse_model_response(
-                '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"variation","prompt":"A similar version"}}'
+                '{"replyText":"好。","imageGeneration":{"needed":true,"operation":"variation",'
+                '"prompt":"A similar version","sourceImageIds":["current:0"]}}'
             )
 
     def test_image_create_rejects_source_candidate_ids(self):

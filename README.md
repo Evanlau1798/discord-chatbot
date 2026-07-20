@@ -58,8 +58,8 @@ Discord 伺服器：[加入討論](https://discord.gg/p222BzAtGj)
 
 - Python 3.9+
 - Discord Bot token
-- Google GenAI API key
-- OpenSERP 搜尋服務（從 `reference/openserp` 固定版本建置）
+- 所選模型來源的 API key（localhost OpenAI-compatible 可免 key）
+- OpenSERP 搜尋服務（啟動腳本使用固定 stable release image）
 - `yt-dlp`：YouTube 字幕擷取與影片搜尋
 - `ffmpeg` / `ffprobe`：影片附件抽幀
 - Patchright Chromium：網頁 browser fallback
@@ -93,9 +93,35 @@ cp .env.example .env
 
 ```env
 DISCORD_BOT_TOKEN=...
+AI_CHAT_PROVIDER=gemini
 GEMINI_API_KEY=...
 MEMORY_ENCRYPTION_KEY=...
 ```
+
+`AI_CHAT_PROVIDER` 支援 `gemini`、`nvidia` 與 `openai_compatible`。未設定時維持使用 Gemini。
+
+NVIDIA API Catalog 預設使用 `https://integrate.api.nvidia.com/v1`，也可以把 base URL 指向自架 NIM：
+
+```env
+AI_CHAT_PROVIDER=nvidia
+NVIDIA_API_KEY=...
+NVIDIA_MODEL=模型 ID
+```
+
+`.env.example` 已預先配置 message strategy、thinking、輸出長度、NVCF、OpenSERP、YT-DLP、影片與 ASR 的建議值。初次設定通常只需填入 secret；生圖功能預設關閉。
+
+NVIDIA API Catalog 沒有 Gemini `cachedContents` 的建立、查詢或刪除 API，因此本專案不會替 NVIDIA 模擬快取資源或本地回應快取。自架 NIM 可由部署端設定 `NIM_ENABLE_KV_CACHE_REUSE=1` 使用透明 prefix/KV cache；它主要改善重複長前綴的首 token 延遲，不代表 API Catalog 提供 cached-token 計費折扣。API Catalog 是 trial 服務，不可直接作為正式 production subscription；正式環境需使用合約允許的 hosted 服務或自架 NIM。相關限制請參考 [NVIDIA NIM KV cache 設定](https://docs.nvidia.com/nim/large-language-models/1.12.0/configuration.html) 與 [NVIDIA API Trial Terms](https://assets.ngc.nvidia.com/products/api-catalog/legal/NVIDIA%20API%20Trial%20Terms%20of%20Service.pdf)。
+
+一般 OpenAI-compatible `/chat/completions` 服務使用以下設定；localhost 服務不需要驗證時可將 key 留空：
+
+```env
+AI_CHAT_PROVIDER=openai_compatible
+OPENAI_COMPAT_API_KEY=
+OPENAI_COMPAT_BASE_URL=http://127.0.0.1:8000/v1
+OPENAI_COMPAT_MODEL=模型 ID
+```
+
+圖片會以標準 `image_url` 或 base64 data URL 傳送，影片則先抽幀並整理為 contact sheet。所選模型必須支援視覺輸入，否則服務會回報模型錯誤。模型來源重試失敗後不會自動把對話送往其他 provider。
 
 產生 `MEMORY_ENCRYPTION_KEY`：
 
@@ -106,7 +132,7 @@ print(Fernet.generate_key().decode())
 PY
 ```
 
-更多可用參數請看 [.env.example](.env.example)。
+完整且可直接使用的預設設定請看 [.env.example](.env.example)。
 
 Discord 訊息處理預設同時執行 3 則請求；這是 async 併發數，不是 OS thread 數：
 
@@ -130,9 +156,9 @@ YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
 YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
 
-OpenSERP 會平行查詢多個引擎、去重並擷取前 3–5 個來源。Bot 最多同時送出 3 個 OpenSERP 請求；Google 在服務端限制為全域每秒一次，遇到 CAPTCHA 時不重試 Google，其他引擎仍會回傳 partial success。
+OpenSERP 會平行查詢多個引擎、去重並先擷取最多 5 個候選頁面，再由 Bot 依相關性、來源 profile 與網域多樣性選出 3–5 個來源。`OPENSERP_TIME_RANGE` 僅適合有發佈日期的內容，可使用 `today`、`week`、`month`、`year` 或 `YYYYMMDD..YYYYMMDD`；即時天氣等動態頁面應留空。Bot 最多同時送出 3 個 OpenSERP 請求；Google 在服務端限制為全域每秒一次，遇到 CAPTCHA 時不重試 Google，其他引擎仍會回傳 partial success。
 
-先確認固定版本原始碼位於 `reference/openserp`，再執行 `./start_openserp.sh`。服務只會映射到 `127.0.0.1:17000`，且預設關閉 CORS、request proxy URL 與 CAPTCHA solver。停止服務使用 `./stop_openserp.sh`。
+執行 `./start_openserp.sh` 會使用官方 stable release `0.8.6`，並以 image manifest digest 鎖定內容；不會從 `main`、`latest` 或本機 `reference/openserp` 自動更新建置。服務只會映射到 `127.0.0.1:17000`，且預設關閉 CORS、request proxy URL 與 CAPTCHA solver。未來升級 stable release 時，需明確更新腳本中的 release 與 digest。停止服務使用 `./stop_openserp.sh`。
 YouTube 影片搜尋仍使用獨立的 `yt-dlp` queue，預設每輪只執行 1 個 query，並讓 request 間隔 1 秒。
 
 若要啟用生圖，請在 `.env` 設定 `AI_IMAGINE_ENABLED=1`、`AI_IMAGINE_BASE_URL`、`AI_IMAGINE_API_KEY` 與 `AI_IMAGINE_MODEL`。關閉時 bot 不會在 prompt 中要求模型輸出 `imageGeneration`。

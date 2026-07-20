@@ -25,7 +25,8 @@ class ImagePromptRuleTests(unittest.TestCase):
         with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "1"}):
             prompt = PersonaPromptBuilder().build_system_prompt(persona)
 
-        self.assertIn('operation: "create" | "edit" | "variation"', prompt)
+        self.assertIn('operation: "create" | "edit"', prompt)
+        self.assertNotIn('"variation"', prompt)
         self.assertIn("sourceImageIds", prompt)
         self.assertIn("usePersonaIdentity", prompt)
         self.assertIn("人設角色", prompt)
@@ -58,6 +59,10 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("[有意義的顯示文字](https://example.com)", prompt)
         self.assertIn("每個 query 都必須脫離目前對話後仍能單獨理解", prompt)
         self.assertIn("多個合理指涉對象", prompt)
+        self.assertIn("YYYYMMDD..YYYYMMDD", prompt)
+        self.assertIn("即時天氣、預報、警報", prompt)
+        self.assertIn("動態官方頁面", prompt)
+        self.assertIn("當地語言", prompt)
 
     def test_system_prompt_requires_cross_language_media_search_queries(self):
         persona = Persona(key="test", name="Test", data={"characterName": "Test"})
@@ -89,7 +94,8 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("sourceImageIds", instruction)
         self.assertIn("usePersonaIdentity", instruction)
         self.assertIn("人設身份", instruction)
-        self.assertIn("edit 或 variation", instruction)
+        self.assertIn("edit 需要讓目前人設角色", instruction)
+        self.assertNotIn("variation", instruction)
 
     def test_repair_instruction_omits_image_generation_protocol_when_disabled(self):
         with patch.dict("os.environ", {"AI_IMAGINE_ENABLED": "0"}):
@@ -156,27 +162,6 @@ class ImagePromptRuleTests(unittest.TestCase):
         self.assertIn("Do not blend", prompt)
         self.assertIn("scene, composition, camera angle, pose", prompt)
         self.assertIn("except conflicting character identity", prompt)
-
-    def test_variation_prompt_preserves_identity_and_uses_reference(self):
-        prompt = merge_persona_image_prompt(
-            "character identity constraints",
-            "Try a different pose.",
-            operation="variation",
-            use_persona_identity=True,
-        )
-
-        self.assertIn("distinct visual variation", prompt)
-        self.assertIn("recognizable identity", prompt)
-        self.assertIn("character identity constraints", prompt)
-
-    def test_generic_variation_does_not_inject_active_persona_identity(self):
-        prompt = merge_persona_image_prompt(
-            "character identity constraints",
-            "Try a different pose.",
-            operation="variation",
-        )
-
-        self.assertNotIn("character identity constraints", prompt)
 
     def test_merge_prompt_adds_text_policy_with_persona_reference(self):
         prompt = merge_persona_image_prompt("silver hair; red eyes", "standing in a cafe")

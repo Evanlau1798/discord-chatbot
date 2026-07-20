@@ -96,21 +96,6 @@ def merge_persona_image_prompt(
             "Requested changes:\n"
             f"{normalized_generated_prompt}"
         ).strip()
-    if normalized_operation == "variation":
-        identity_constraints = (
-            "\n\nUse these authoritative character identity constraints. They override conflicting character "
-            "features in the supplied source image, except where the user explicitly requests a change:\n"
-            f"{normalized_image_prompt}"
-            if use_persona_identity and normalized_image_prompt
-            else ""
-        )
-        return (
-            f"{IMAGE_STYLE_POLICY}\n\n{IMAGE_TEXT_POLICY}\n\n"
-            "Create a distinct visual variation of the supplied source image. Preserve its recognizable identity, "
-            "core subject, and defining features while varying only the pose, framing, composition, or secondary "
-            "details requested by the user."
-            f"{identity_constraints}\n\nVariation request:\n{normalized_generated_prompt}"
-        ).strip()
     base_policy = f"{IMAGE_STYLE_POLICY}\n\n{IMAGE_TEXT_POLICY}"
     if not normalized_image_prompt:
         return f"{base_policy}\n\nUser image request:\n{normalized_generated_prompt}".strip()

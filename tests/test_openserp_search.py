@@ -1,10 +1,17 @@
 import asyncio
+from datetime import date
 import os
 import unittest
 from unittest.mock import patch
 
 from utils.openserp_client import OpenSerpResponse, OpenSerpSource
-from utils.openserp_search import SearchPlanner, canonicalize_source_url, select_reliable_sources
+from utils.openserp_search import (
+    SearchOptions,
+    SearchPlanner,
+    canonicalize_source_url,
+    normalize_openserp_time_range,
+    select_reliable_sources,
+)
 
 
 class _Client:
@@ -96,6 +103,81 @@ class OpenSerpQualityTests(unittest.TestCase):
 
         self.assertEqual(selected[0].url, "https://weather.gov.test/warning")
 
+    def test_official_profile_excludes_lower_trust_sources_when_authority_exists(self):
+        sources = [
+            (
+                "台北 天氣 降雨機率",
+                OpenSerpSource(
+                    "臺北市縣市預報",
+                    "https://weather.gov.test/taipei",
+                    snippet="臺北市今日天氣與降雨機率",
+                    text="official " * 100,
+                    source_category="gov",
+                ),
+            ),
+            (
+                "台北 天氣 降雨機率",
+                OpenSerpSource(
+                    "臺北市一週預報",
+                    "https://weather.gov.test/taipei/week",
+                    snippet="臺北市一週天氣與降雨機率",
+                    text="official week " * 100,
+                    source_category="gov",
+                ),
+            ),
+            (
+                "台北 天氣 降雨機率",
+                OpenSerpSource(
+                    "報天氣社群貼文",
+                    "https://social.test/weather",
+                    snippet="台北今日天氣與降雨機率",
+                    text="social " * 100,
+                    source_category="social_media",
+                ),
+            ),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3, source_profile="official")
+
+        self.assertEqual([source.url for source in selected], ["https://weather.gov.test/taipei"])
+
+    def test_chinese_relevance_rejects_location_only_encyclopedia(self):
+        query = "台北2026-07-20 天氣 降雨機率"
+        sources = [
+            (
+                query,
+                OpenSerpSource(
+                    "臺北市縣市預報",
+                    "https://weather.gov.test/taipei",
+                    snippet="臺北市今日天氣，多雲且有降雨機率",
+                    text="forecast " * 100,
+                    source_category="gov",
+                ),
+            ),
+            (
+                query,
+                OpenSerpSource(
+                    "臺北市",
+                    "https://zh.wikipedia.org/wiki/taipei",
+                    snippet="臺北市是位於臺灣北部的城市",
+                    text="encyclopedia " * 100,
+                    source_hint="encyclopedia",
+                ),
+            ),
+        ]
+
+        selected = select_reliable_sources(sources, desired_sources=3)
+
+        self.assertEqual([source.url for source in selected], ["https://weather.gov.test/taipei"])
+
+    def test_time_range_normalizes_relative_and_iso_date_values_for_openserp(self):
+        today = date(2026, 7, 20)
+
+        self.assertEqual(normalize_openserp_time_range("today", today=today), "20260720..20260720")
+        self.assertEqual(normalize_openserp_time_range("2026-07-01..2026-07-20", today=today), "20260701..20260720")
+        self.assertEqual(normalize_openserp_time_range("2026-07-20", today=today), "20260720..20260720")
+        self.assertEqual(normalize_openserp_time_range("invalid", today=today), "")
+
     def test_technical_profile_infers_documentation_when_openserp_hint_is_empty(self):
         sources = [
             ("python threading documentation", OpenSerpSource("Python discussion", "https://forum.test/python", text="a" * 300, source_category="forum")),
@@ -148,6 +230,23 @@ class OpenSerpPlannerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(results[0].text)
         self.assertIn("可靠來源不足", results[0].error)
 
+    async def test_planner_accepts_single_authoritative_source_for_official_profile(self):
+        response = OpenSerpResponse(sources=(
+            OpenSerpSource(
+                "Official warning",
+                "https://weather.gov.test/warning",
+                text="official warning " * 100,
+                source_category="gov",
+            ),
+        ))
+        planner = SearchPlanner(timeout_ms=1000, client=_Client({"warning": response}))
+
+        results = await planner.search_many(["warning"], options=SearchOptions(source_profile="official"))
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].text)
+        self.assertFalse(results[0].error)
+
     async def test_planner_requires_two_distinct_domains_for_cross_checking(self):
         response = OpenSerpResponse(sources=(
             OpenSerpSource("One", "https://same.test/one", text="one " * 100),
@@ -160,6 +259,35 @@ class OpenSerpPlannerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].text)
         self.assertIn("可靠來源不足", results[0].error)
+
+    async def test_planner_logs_only_safe_result_diagnostics(self):
+        response = OpenSerpResponse(sources=(
+            OpenSerpSource(
+                "One",
+                "https://same.test/one",
+                snippet="private query source",
+                text="private result text " * 100,
+                engines=("bing",),
+            ),
+            OpenSerpSource(
+                "Two",
+                "https://same.test/two",
+                snippet="private query source",
+                text="another private result " * 100,
+                engines=("duckduckgo",),
+            ),
+        ))
+        planner = SearchPlanner(timeout_ms=1000, client=_Client({"private query": response}))
+
+        with self.assertLogs("utils.openserp_search", level="INFO") as captured:
+            await planner.search_many(["private query"])
+
+        log_output = "\n".join(captured.output)
+        self.assertIn("selected_chars=", log_output)
+        self.assertIn("distinct_domains=1", log_output)
+        self.assertIn("returned_readable=0", log_output)
+        self.assertNotIn("private query", log_output)
+        self.assertNotIn("private result text", log_output)
 
     async def test_planners_share_global_three_request_limit(self):
         class SlowClient(_Client):

@@ -22,7 +22,7 @@ class AiChatBrowserFlowMixin:
         include_images: bool,
         search_options,
         message,
-        cached_content: str | None,
+        persona_key: str | None,
         request_status=None,
     ):
         browser_notice = await self._send_browser_notice(
@@ -39,7 +39,7 @@ class AiChatBrowserFlowMixin:
             {"role": "user", "content": build_browser_followup_content(browser_results, allow_search_retry=retry_allowed)},
         ]
         parsed, fallback_raw = await self._complete_and_parse_with_raw(
-            followup_messages, message, cached_content, request_status
+            followup_messages, message, persona_key, request_status
         )
         if parsed.browser is None:
             return parsed, browser_notice
@@ -53,7 +53,7 @@ class AiChatBrowserFlowMixin:
             {"role": "assistant", "content": fallback_raw},
             {"role": "user", "content": build_browser_followup_content(fallback_results, allow_search_retry=False)},
         ]
-        final, _ = await self._complete_and_parse_with_raw(final_messages, message, cached_content, request_status)
+        final, _ = await self._complete_and_parse_with_raw(final_messages, message, persona_key, request_status)
         return (build_search_failure_response() if final.browser is not None else final), browser_notice
 
     async def _fetch_browser_round(

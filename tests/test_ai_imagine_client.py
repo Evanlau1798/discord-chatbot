@@ -55,15 +55,15 @@ class ImagineClientTests(unittest.TestCase):
         self.assertEqual(file_value[2], "image/png")
         self.assertTrue(file_value[0].endswith(".png"))
 
-    def test_variation_intent_uses_edits_endpoint(self):
+    def test_variation_is_rejected_before_request(self):
         source = ImagineSourceImage(filename="source.png", mime_type="image/png", data=_tiny_png())
         with tempfile.TemporaryDirectory() as tmp_dir:
             client = ImagineClient("test-key", "https://imagine.example.test/v1", "gpt-image-2", Path(tmp_dir))
-            with patch("utils.ai_imagine_client.requests.post", return_value=FakeImagineResponse()) as post:
-                result = client.generate("create a similar pose", operation="variation", source_images=[source])
+            with patch("utils.ai_imagine_client.requests.post") as post:
+                with self.assertRaisesRegex(ImagineAPIError, "create 或 edit"):
+                    client.generate("create a similar pose", operation="variation", source_images=[source])
 
-        self.assertEqual(result.operation, "variation")
-        self.assertEqual(post.call_args.args[0], "https://imagine.example.test/v1/images/edits")
+        post.assert_not_called()
 
     def test_edit_requires_at_least_one_source_image(self):
         client = ImagineClient("test-key", "https://imagine.example.test/v1", "gpt-image-2")

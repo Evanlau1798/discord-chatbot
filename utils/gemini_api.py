@@ -4,7 +4,6 @@ import logging
 import mimetypes
 import os
 import time
-from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -20,16 +19,14 @@ else:
     GENAI_IMPORT_ERROR = None
 
 from utils.ai_api_logging import log_ai_api_event
-from utils.gif_frame_sampler import (
-    is_apng_mime_type,
-    is_gif_mime_type,
-    is_webp_mime_type,
-    sample_apng_frames,
-    sample_gif_frames,
-    sample_webp_frames,
+from utils.chat_client import (
+    ChatAPIError,
+    ChatClient,
+    ChatClientConfigError,
+    ChatResponse,
+    is_retryable_api_error,
 )
-from utils.media_frame_presentation import present_media_frames
-from utils.video_frame_splitter import split_video_bytes
+from utils.chat_media import prepare_image_bytes, prepare_image_data, prepare_video_bytes
 
 DEFAULT_GEMINI_MODEL = "gemma-4-31b-it"
 REQUEST_TIMEOUT_MS = 180_000
@@ -39,32 +36,52 @@ CACHE_ENABLED_ENV = "GEMINI_CACHE_ENABLED"
 logger = logging.getLogger("discord.utils.gemini_api")
 
 
-@dataclass
-class GeminiResponse:
-    raw_content: str
-    visible_content: str
-    thinking_content: str = ""
-    delivery_mode: str = "complete"
+GeminiResponse = ChatResponse
 
 
-class GeminiAPIError(Exception):
+class GeminiAPIError(ChatClientConfigError):
     pass
 
 
-class GeminiChatClient:
+class GeminiChatClient(ChatClient):
+    provider_name = "gemini"
+
     def __init__(self, api_key: str, model: str = DEFAULT_GEMINI_MODEL):
         if not api_key:
-            raise GeminiAPIError("缺少 GEMINIAPIKEY")
+            raise GeminiAPIError("缺少 GEMINI_API_KEY 或 GEMINIAPIKEY")
         _ensure_genai_sdk()
         self.client = genai.Client(api_key=api_key)
         self.model = model
+        self.persona_cache_names: dict[str, str] = {}
 
     def complete(
         self,
         messages: list[dict[str, Any]],
         *,
         temperature: float = 0.7,
-        cached_content: str | None = None,
+        persona_key: str | None = None,
+    ) -> GeminiResponse:
+        cached_content = self.persona_cache_names.get(str(persona_key or ""))
+        try:
+            return self._complete_once(messages, temperature=temperature, cached_content=cached_content)
+        except Exception as exc:
+            if cached_content and not is_retryable_api_error(exc):
+                logger.warning(
+                    "gemini.cached_content_failed_fallback error_type=%s",
+                    type(exc).__name__,
+                )
+                try:
+                    return self._complete_once(messages, temperature=temperature, cached_content=None)
+                except Exception as fallback_exc:
+                    raise _chat_api_error(fallback_exc) from fallback_exc
+            raise _chat_api_error(exc) from exc
+
+    def _complete_once(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float,
+        cached_content: str | None,
     ) -> GeminiResponse:
         system_instruction, contents = self._split_messages(messages)
         if cached_content:
@@ -98,7 +115,6 @@ class GeminiChatClient:
                 model=self.model,
                 elapsed_ms=round((time.monotonic() - started_at) * 1000, 3),
                 error_type=type(exc).__name__,
-                error=str(exc),
             )
             raise
         visible_content, thinking_content = self._extract_response_texts(response)
@@ -116,6 +132,7 @@ class GeminiChatClient:
         cache_enabled, reason = _explicit_cache_enabled(self.model)
         if not cache_enabled:
             logger.info("gemini.cache_skipped model=%s reason=%s", self.model, reason)
+            self.persona_cache_names = {}
             return {}
         self.delete_project_caches()
         cache_names = {}
@@ -131,6 +148,7 @@ class GeminiChatClient:
                         self.model,
                         type(exc).__name__,
                     )
+                    self.persona_cache_names = cache_names
                     return cache_names
                 logger.warning(
                     "gemini.cache_create_failed persona=%s error_type=%s error=%s",
@@ -143,6 +161,7 @@ class GeminiChatClient:
             if cache_name:
                 cache_names[key] = cache_name
         logger.info("gemini.cache_refresh_complete count=%s", len(cache_names))
+        self.persona_cache_names = cache_names
         return cache_names
 
     def delete_project_caches(self) -> None:
@@ -223,9 +242,9 @@ class GeminiChatClient:
                 if image_url:
                     parts.extend(self._safe_download_image_parts(image_url))
             elif item.get("type") == "image_bytes":
-                parts.extend(_image_bytes_parts(item.get("image_bytes", {})))
+                parts.extend(_genai_parts(prepare_image_bytes(item.get("image_bytes", {}))))
             elif item.get("type") == "video_bytes":
-                parts.extend(_video_bytes_parts(item.get("video_bytes", {})))
+                parts.extend(_genai_parts(prepare_video_bytes(item.get("video_bytes", {}))))
         return parts or [genai_types.Part.from_text(text="")]
 
     def _safe_download_image_parts(self, url: str) -> list:
@@ -241,7 +260,7 @@ class GeminiChatClient:
         mime_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip()
         if not mime_type:
             mime_type = mimetypes.guess_type(url)[0] or "application/octet-stream"
-        return _image_data_parts(response.content, mime_type, source_label=url)
+        return _genai_parts(prepare_image_data(response.content, mime_type, source_label=url))
 
     @staticmethod
     def _extract_response_texts(response) -> tuple[str, str]:
@@ -270,166 +289,29 @@ def _ensure_genai_sdk():
         raise GeminiAPIError("缺少 google-genai 套件") from GENAI_IMPORT_ERROR
 
 
-def _image_bytes_parts(payload) -> list:
-    if not isinstance(payload, dict):
-        return []
-    data = payload.get("data")
-    if not isinstance(data, (bytes, bytearray)) or not data:
-        return []
-    mime_type = str(payload.get("mime_type") or "application/octet-stream").strip() or "application/octet-stream"
-    return _image_data_parts(bytes(data), mime_type)
+def _genai_parts(parts: list[dict]) -> list:
+    converted = []
+    for part in parts:
+        if part.get("type") == "text":
+            converted.append(genai_types.Part.from_text(text=str(part.get("text") or "")))
+            continue
+        payload = part.get("image_bytes", {})
+        data = payload.get("data")
+        if isinstance(data, (bytes, bytearray)) and data:
+            mime_type = str(payload.get("mime_type") or "application/octet-stream")
+            converted.append(genai_types.Part.from_bytes(data=bytes(data), mime_type=mime_type))
+    return converted
 
 
-def _video_bytes_parts(payload) -> list:
-    if not isinstance(payload, dict):
-        return []
-    data = payload.get("data")
-    if not isinstance(data, (bytes, bytearray)) or not data:
-        return []
-    mime_type = str(payload.get("mime_type") or "application/octet-stream").strip() or "application/octet-stream"
-    filename = str(payload.get("filename") or "").strip()
-    try:
-        split_result = split_video_bytes(bytes(data), mime_type, filename=filename)
-    except Exception as exc:
-        logger.warning("gemini.video_sampling_failed error_type=%s error=%s", type(exc).__name__, exc)
-        return []
-    if split_result is None:
-        logger.warning("gemini.video_sampling_failed source=%s", _safe_source_label(filename or mime_type))
-        return []
-    presented_parts = _contact_sheet_parts(split_result.frames, _video_sampling_note(split_result, filename))
-    if presented_parts:
-        return presented_parts
-    return [
-        genai_types.Part.from_text(text=_video_sampling_note(split_result, filename)),
-        *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in split_result.frames),
-    ]
-
-
-def _image_data_parts(data: bytes, mime_type: str, *, source_label: str = "") -> list:
-    normalized_mime_type = str(mime_type or "application/octet-stream").split(";", 1)[0].strip() or "application/octet-stream"
-    if is_gif_mime_type(normalized_mime_type):
-        try:
-            sampling = sample_gif_frames(data)
-        except Exception as exc:
-            logger.warning(
-                "gemini.gif_sampling_failed source=%s error_type=%s error=%s",
-                _safe_source_label(source_label),
-                type(exc).__name__,
-                exc,
-            )
-            return []
-        if sampling is None:
-            logger.warning("gemini.gif_sampling_failed source=%s", _safe_source_label(source_label))
-            return []
-        presented_parts = _contact_sheet_parts(sampling.frames, _gif_sampling_note(sampling))
-        if presented_parts:
-            return presented_parts
-        return [
-            genai_types.Part.from_text(text=_gif_sampling_note(sampling)),
-            *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
-        ]
-    if is_webp_mime_type(normalized_mime_type):
-        try:
-            sampling = sample_webp_frames(data)
-        except Exception as exc:
-            logger.warning(
-                "gemini.webp_sampling_failed source=%s error_type=%s error=%s",
-                _safe_source_label(source_label),
-                type(exc).__name__,
-                exc,
-            )
-            sampling = None
-        if sampling is not None:
-            presented_parts = _contact_sheet_parts(sampling.frames, _webp_sampling_note(sampling))
-            if presented_parts:
-                return presented_parts
-            return [
-                genai_types.Part.from_text(text=_webp_sampling_note(sampling)),
-                *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
-            ]
-    if is_apng_mime_type(normalized_mime_type):
-        try:
-            sampling = sample_apng_frames(data)
-        except Exception as exc:
-            logger.warning(
-                "gemini.apng_sampling_failed source=%s error_type=%s error=%s",
-                _safe_source_label(source_label),
-                type(exc).__name__,
-                exc,
-            )
-            sampling = None
-        if sampling is not None:
-            presented_parts = _contact_sheet_parts(sampling.frames, _apng_sampling_note(sampling))
-            if presented_parts:
-                return presented_parts
-            return [
-                genai_types.Part.from_text(text=_apng_sampling_note(sampling)),
-                *(genai_types.Part.from_bytes(data=frame.data, mime_type=frame.mime_type) for frame in sampling.frames),
-            ]
-    return [genai_types.Part.from_bytes(data=data, mime_type=normalized_mime_type)]
-
-def _contact_sheet_parts(frames, note_text: str) -> list:
-    try:
-        presentation = present_media_frames(tuple(frames or ()))
-    except Exception as exc:
-        logger.warning("gemini.frame_presentation_failed error_type=%s error=%s", type(exc).__name__, exc)
-        return []
-    if presentation is None:
-        return []
-    return [
-        genai_types.Part.from_text(text=f"{note_text} {_contact_sheet_note(presentation)}"),
-        *(genai_types.Part.from_bytes(data=sheet.data, mime_type=sheet.mime_type) for sheet in presentation.sheets),
-    ]
-
-
-def _contact_sheet_note(presentation) -> str:
-    return (
-        f"The following {len(presentation.sheets)} image parts are contact sheet summaries of the sampled frames, "
-        "not separate single-frame images. Read each contact sheet left-to-right, top-to-bottom; sheets are chronological. "
-        f"sampled_frame_parts={presentation.input_frame_count}, kept_after_dedupe={presentation.kept_frame_count}, "
-        f"dropped_similar_frames={presentation.dropped_similar_count}."
+def _chat_api_error(exc: Exception) -> ChatAPIError:
+    if isinstance(exc, ChatAPIError):
+        return exc
+    return ChatAPIError(
+        "Gemini API 請求失敗",
+        provider="gemini",
+        status_code=getattr(exc, "status_code", None) or getattr(exc, "code", None),
+        retryable=is_retryable_api_error(exc),
     )
-
-
-def _gif_sampling_note(sampling) -> str:
-    mode = "all" if sampling.sampled_all else "sampled"
-    return (
-        f"The following {len(sampling.frames)} image parts are {mode} sampled image frames from one animated GIF, "
-        f"in chronological order. Original GIF frame_count={sampling.frame_count}, duration_ms={sampling.duration_ms}. "
-        "Use them together as a temporal sequence."
-    )
-
-
-def _webp_sampling_note(sampling) -> str:
-    mode = "all" if sampling.sampled_all else "sampled"
-    return (
-        f"The following {len(sampling.frames)} image parts are {mode} sampled image frames from one WebP image or animation, "
-        f"in chronological order. Original WebP frame_count={sampling.frame_count}, duration_ms={sampling.duration_ms}. "
-        "Use them together as a temporal sequence when multiple frames are present."
-    )
-
-
-def _apng_sampling_note(sampling) -> str:
-    mode = "all" if sampling.sampled_all else "sampled"
-    return (
-        f"The following {len(sampling.frames)} image parts are {mode} sampled image frames from one APNG animation, "
-        f"in chronological order. Original APNG frame_count={sampling.frame_count}, duration_ms={sampling.duration_ms}. "
-        "Use them together as a temporal sequence."
-    )
-
-
-def _video_sampling_note(split_result, filename: str = "") -> str:
-    mode = "all" if split_result.sampled_all else "sampled"
-    source = f" filename={filename}." if filename else "."
-    return (
-        f"The following image parts are {mode} JPEG frames sampled from one video,"
-        f"{source} Original sampled_frame_count={len(split_result.frames)}, original video frame_count={split_result.frame_count}, "
-        f"duration_ms={split_result.duration_ms}. Use them together as a temporal sequence."
-    )
-
-
-def _safe_source_label(value: str) -> str:
-    return str(value or "")[:120]
 
 
 def _estimate_messages_chars(messages: list[dict[str, Any]]) -> int:
@@ -481,19 +363,4 @@ def _is_explicit_cache_unsupported_error(exc: Exception) -> bool:
 
 
 def _is_retryable_api_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return (
-        "500" in message
-        or "internal" in message
-        or "502" in message
-        or "bad gateway" in message
-        or "503" in message
-        or "unavailable" in message
-        or "504" in message
-        or "gateway timeout" in message
-        or "429" in message
-        or "rate limit" in message
-        or "high demand" in message
-        or "temporarily" in message
-        or "timeout" in message
-    )
+    return is_retryable_api_error(exc)

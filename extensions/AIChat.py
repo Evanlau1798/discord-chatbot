@@ -3,12 +3,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 from collections import defaultdict
 
 import discord
 from discord.ext import commands
-from google.genai import errors as genai_errors
 
 from utils.EmbedMessage import SakuraEmbedMsg
 from utils.ai_chat_browser import format_browser_notice_targets
@@ -18,12 +16,13 @@ from utils.ai_chat_settings import AiChatUserSettingsStore
 from utils.ai_chat_context import AiChatContextMixin, MAX_CHAT_TURNS
 from utils.ai_chat_image_flow import AiChatImageFlowMixin
 from utils.ai_imagine_client import ImagineAPIError
+from utils.chat_client import ChatAPIError
+from utils.chat_client_factory import create_chat_client
 from utils.discord_notice_timing import MIN_BROWSER_NOTICE_DISPLAY_SECONDS, wait_for_min_notice_display
 from utils.discord_files import send_content_with_files
 from utils.discord_presence import keep_typing
 from utils.discord_request_status import DiscordRequestStatus
 from utils.discord_status_notice import delete_notice, edit_notice, format_queue_notice_content
-from utils.gemini_api import DEFAULT_GEMINI_MODEL, GeminiChatClient, _is_retryable_api_error
 from utils.image_context_cache import ImageContextCache
 from utils.image_reference_resolver import ImageReferenceResolver
 from utils.image_reference_store import ImageReferenceStore
@@ -40,7 +39,7 @@ from utils.web_tool_client import HeadlessBrowserClient
 
 logger = logging.getLogger("discord.extensions.AIChat")
 USER_CHAT_LOCKS = defaultdict(asyncio.Lock)
-GENAI_RETRY_DELAYS = (1, 5, 5, 10, 30)
+MODEL_RETRY_DELAYS = (1, 5, 5, 10, 30)
 LOADING_EMOJI = "<a:loading:1303077872805744650>"
 VIDEO_PROCESSING_STATUS = f"-# {LOADING_EMOJI} 幀在處理影片文字"
 
@@ -65,11 +64,13 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
         self.request_limiter = AiChatRequestLimiter()
         logger.info("ai_chat.request_limiter_configured max_parallel_requests=%s", self.request_limiter.max_parallel_requests)
         self.image_generation_enabled = is_image_generation_enabled()
-        self.gemini_client = GeminiChatClient(
-            api_key=os.getenv("GEMINIAPIKEY") or os.getenv("GEMINI_API_KEY"),
-            model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+        self.chat_client = create_chat_client()
+        logger.info(
+            "ai_chat.model_client_configured provider=%s model=%s",
+            self.chat_client.provider_name,
+            getattr(self.chat_client, "model", ""),
         )
-        self.persona_cache_names = self._refresh_persona_caches()
+        self._refresh_persona_caches()
         self.imagine_client = None
 
     @commands.Cog.listener()
@@ -177,9 +178,9 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                 server_history,
                 image_candidates=image_candidates,
             )
-            cached_content = self.persona_cache_names.get(persona.key) if persona is not None else None
+            persona_key = persona.key if persona is not None else None
             parsed, raw_response = await self._complete_and_parse_with_raw(
-                request_messages, message, cached_content, request_status
+                request_messages, message, persona_key, request_status
             )
             browser_notice = None
             browser_used = False
@@ -195,7 +196,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                     parsed.browser.include_images,
                     parsed.browser.search_options,
                     message,
-                    cached_content,
+                    persona_key,
                     request_status,
                 )
             image_status_message = None
@@ -249,20 +250,20 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
         self,
         messages: list[dict],
         message: discord.Message,
-        cached_content: str | None,
+        persona_key: str | None,
         request_status: DiscordRequestStatus | None = None,
     ):
-        parsed, _ = await self._complete_and_parse_with_raw(messages, message, cached_content, request_status)
+        parsed, _ = await self._complete_and_parse_with_raw(messages, message, persona_key, request_status)
         return parsed
 
     async def _complete_and_parse_with_raw(
         self,
         messages: list[dict],
         message: discord.Message,
-        cached_content: str | None,
+        persona_key: str | None,
         request_status: DiscordRequestStatus | None = None,
     ):
-        response = await self._complete_with_retry(messages, message, cached_content, request_status)
+        response = await self._complete_with_retry(messages, message, persona_key, request_status)
         try:
             return parse_model_response(response.visible_content), response.visible_content
         except ValueError:
@@ -270,7 +271,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
                 {"role": "assistant", "content": response.visible_content},
                 {"role": "user", "content": build_repair_instruction()},
             ]
-            repair_response = await self._complete_with_retry(repair_messages, message, cached_content, request_status)
+            repair_response = await self._complete_with_retry(repair_messages, message, persona_key, request_status)
             try:
                 return parse_model_response(repair_response.visible_content), repair_response.visible_content
             except ValueError:
@@ -284,37 +285,34 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
         self,
         messages: list[dict],
         message: discord.Message,
-        cached_content: str | None,
+        persona_key: str | None,
         request_status: DiscordRequestStatus | None = None,
     ):
         status = request_status or DiscordRequestStatus(message, logger)
         try:
-            for attempt_index in range(len(GENAI_RETRY_DELAYS) + 1):
+            for attempt_index in range(len(MODEL_RETRY_DELAYS) + 1):
                 try:
-                    return await asyncio.to_thread(self.gemini_client.complete, messages, cached_content=cached_content)
+                    return await asyncio.to_thread(
+                        self.chat_client.complete,
+                        messages,
+                        persona_key=persona_key,
+                    )
                 except Exception as exc:
-                    if cached_content and not _is_retryable_api_error(exc):
-                        logger.warning(
-                            "ai_chat.cached_content_failed_fallback error_type=%s error=%s",
-                            type(exc).__name__,
-                            exc,
-                        )
-                        return await asyncio.to_thread(self.gemini_client.complete, messages)
-                    if attempt_index >= len(GENAI_RETRY_DELAYS) or not _is_retryable_api_error(exc):
+                    if attempt_index >= len(MODEL_RETRY_DELAYS) or not self.chat_client.is_retryable_error(exc):
                         raise
                     retry_number = attempt_index + 1
-                    delay_seconds = GENAI_RETRY_DELAYS[attempt_index]
+                    delay_seconds = MODEL_RETRY_DELAYS[attempt_index]
                     logger.warning(
-                        "ai_chat.genai_retry retry=%s delay_seconds=%s error_type=%s error=%s",
+                        "ai_chat.model_retry provider=%s retry=%s delay_seconds=%s error_type=%s",
+                        self.chat_client.provider_name,
                         retry_number,
                         delay_seconds,
                         type(exc).__name__,
-                        exc,
                     )
                     if retry_number >= 3:
                         retry_content = (
                             f"-# {LOADING_EMOJI} GenAI 服務暫時不穩，正在重試 "
-                            f"({retry_number}/{len(GENAI_RETRY_DELAYS)})，下一次嘗試約 {delay_seconds} 秒後。"
+                            f"({retry_number}/{len(MODEL_RETRY_DELAYS)})，下一次嘗試約 {delay_seconds} 秒後。"
                         )
                         await status.set_retry(retry_content)
                     await asyncio.sleep(delay_seconds)
@@ -417,7 +415,7 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
         if not prompts_by_key:
             logger.warning("ai_chat.no_persona_cache_candidates")
             return {}
-        return self.gemini_client.refresh_persona_caches(prompts_by_key)
+        return self.chat_client.refresh_persona_caches(prompts_by_key)
 
     def _resolve_persona_setting(self, value: str) -> str | None:
         normalized = str(value or "").strip()
@@ -429,7 +427,11 @@ class AiChat(AiChatImageFlowMixin, AiChatBrowserFlowMixin, AiChatContextMixin, c
 def _user_error_message(exc: Exception) -> str:
     if isinstance(exc, ImagineAPIError):
         return "圖片生成服務暫時不可用，請稍後再試一次。"
-    if isinstance(exc, genai_errors.APIError):
+    if isinstance(exc, ChatAPIError):
+        if exc.status_code in {400, 413, 415, 422}:
+            return "所選模型無法處理這個請求或附件，請確認模型支援目前的文字與多模態輸入。"
+        if exc.status_code in {401, 403, 404}:
+            return "模型服務設定或驗證失敗，請聯絡管理員檢查 provider、model 與 API key。"
         return "模型服務目前忙碌或暫時不可用，請稍後再試一次。"
     if isinstance(exc, (ValueError, RuntimeError)):
         return str(exc)

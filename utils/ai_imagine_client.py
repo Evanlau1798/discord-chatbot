@@ -182,8 +182,8 @@ def _normalize_imagine_api_mode(api_mode: str | None) -> str:
 
 def _normalize_image_operation(operation: str) -> str:
     normalized = str(operation or "create").strip().lower()
-    if normalized not in {"create", "edit", "variation"}:
-        raise ImagineAPIError("圖片操作僅支援 create、edit 或 variation")
+    if normalized not in {"create", "edit"}:
+        raise ImagineAPIError("圖片操作僅支援 create 或 edit")
     return normalized
 
 

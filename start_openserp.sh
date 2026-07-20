@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DIR="${ROOT_DIR}/reference/openserp"
 CONTAINER_NAME="discord-chatbot-openserp"
-IMAGE_NAME="discord-chatbot-openserp:local"
+OPENSERP_RELEASE="0.8.6"
+OPENSERP_IMAGE_DIGEST="sha256:ac2156fc91d0174623198fb7b1b4766bd55f7c7838076224365b270af385f9e7"
+IMAGE_REFERENCE="docker.io/karust/openserp@${OPENSERP_IMAGE_DIGEST}"
+RELEASE_LABEL="io.discord-chatbot.openserp.release"
+DIGEST_LABEL="io.discord-chatbot.openserp.digest"
 OPENSERP_PORT="${OPENSERP_PORT:-17000}"
-
-if [ ! -f "${SOURCE_DIR}/Dockerfile" ] || [ ! -f "${SOURCE_DIR}/go.mod" ]; then
-  echo "OpenSERP source is missing: ${SOURCE_DIR}" >&2
-  exit 1
-fi
 
 container_runtime() {
   if command -v podman >/dev/null 2>&1; then
@@ -47,19 +44,41 @@ raise SystemExit(1)
 PY
 }
 
+container_uses_pinned_release() {
+  local release digest
+  release="$("${RUNTIME}" inspect -f '{{ index .Config.Labels "io.discord-chatbot.openserp.release" }}' "${CONTAINER_NAME}")"
+  digest="$("${RUNTIME}" inspect -f '{{ index .Config.Labels "io.discord-chatbot.openserp.digest" }}' "${CONTAINER_NAME}")"
+  [ "${release}" = "${OPENSERP_RELEASE}" ] && [ "${digest}" = "${OPENSERP_IMAGE_DIGEST}" ]
+}
+
+remove_existing_container() {
+  if [ "$("${RUNTIME}" inspect -f '{{.State.Running}}' "${CONTAINER_NAME}")" = "true" ]; then
+    "${RUNTIME}" stop "${CONTAINER_NAME}" >/dev/null
+  fi
+  "${RUNTIME}" rm "${CONTAINER_NAME}" >/dev/null
+}
+
 RUNTIME="$(container_runtime)"
 if "${RUNTIME}" inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
-  if [ "$("${RUNTIME}" inspect -f '{{.State.Running}}' "${CONTAINER_NAME}")" = "true" ]; then
+  if container_uses_pinned_release \
+    && [ "$("${RUNTIME}" inspect -f '{{.State.Running}}' "${CONTAINER_NAME}")" = "true" ]; then
     wait_ready
     exit 0
   fi
-  "${RUNTIME}" rm "${CONTAINER_NAME}" >/dev/null
+  echo "Replacing OpenSERP container with pinned stable release ${OPENSERP_RELEASE}."
+  remove_existing_container
 fi
 
-"${RUNTIME}" build --tag "${IMAGE_NAME}" "${SOURCE_DIR}"
+if ! "${RUNTIME}" image inspect "${IMAGE_REFERENCE}" >/dev/null 2>&1; then
+  "${RUNTIME}" pull "${IMAGE_REFERENCE}" >/dev/null
+fi
+
 "${RUNTIME}" run --detach \
+  --pull never \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
+  --label "${RELEASE_LABEL}=${OPENSERP_RELEASE}" \
+  --label "${DIGEST_LABEL}=${OPENSERP_IMAGE_DIGEST}" \
   --publish "127.0.0.1:${OPENSERP_PORT:-17000}:7000" \
   --env OPENSERP_SERVER_HOST=0.0.0.0 \
   --env OPENSERP_SERVER_PORT=7000 \
@@ -70,6 +89,6 @@ fi
   --env OPENSERP_RESILIENCE_MAX_RETRIES=0 \
   --env OPENSERP_GOOGLE_RATE_REQUESTS=60 \
   --env OPENSERP_GOOGLE_RATE_BURST=1 \
-  "${IMAGE_NAME}" serve >/dev/null
+  "${IMAGE_REFERENCE}" serve >/dev/null
 
 wait_ready

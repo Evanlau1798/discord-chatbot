@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_OPENSERP_BASE_URL = "http://127.0.0.1:17000"
 DEFAULT_OPENSERP_ENGINES = ("google", "bing", "duckduckgo", "ecosia")
+DEFAULT_EXTRACTION_DEPTH = 5
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ class OpenSerpClient:
             "mode": "balanced",
             "dedupe": "true",
             "merge": "true",
-            "extract": str(_bounded_sources(search.desired_sources)),
+            "extract": str(DEFAULT_EXTRACTION_DEPTH),
             "extract_mode": "auto",
             "format": "json",
         }
@@ -160,10 +161,3 @@ def _safe_int(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-def _bounded_sources(value: int) -> int:
-    try:
-        return min(max(int(value), 1), 5)
-    except (TypeError, ValueError):
-        return 3

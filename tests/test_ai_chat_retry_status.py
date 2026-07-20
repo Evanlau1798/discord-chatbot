@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from extensions import AIChat as ai_chat_module
-from extensions.AIChat import AiChat, LOADING_EMOJI
+from extensions.AIChat import AiChat, LOADING_EMOJI, _user_error_message
+from utils.chat_client import ChatAPIError
 from utils.discord_request_status import DiscordRequestStatus
 
 
@@ -15,10 +16,7 @@ class AiChatRetryStatusTests(unittest.IsolatedAsyncioTestCase):
         message = _FakeMessage()
         status = DiscordRequestStatus(message, _FakeLogger())
 
-        with (
-            patch.object(ai_chat_module, "_is_retryable_api_error", return_value=True),
-            patch.object(ai_chat_module.asyncio, "sleep", new=AsyncMock()),
-        ):
+        with patch.object(ai_chat_module.asyncio, "sleep", new=AsyncMock()):
             response = await cog._complete_with_retry([], message, None, status)
 
         self.assertEqual(response.visible_content, "ok")
@@ -39,10 +37,7 @@ class AiChatRetryStatusTests(unittest.IsolatedAsyncioTestCase):
         base = f"-# {LOADING_EMOJI} 正在輸入回覆..."
         await status.set_base(base)
 
-        with (
-            patch.object(ai_chat_module, "_is_retryable_api_error", return_value=True),
-            patch.object(ai_chat_module.asyncio, "sleep", new=AsyncMock()),
-        ):
+        with patch.object(ai_chat_module.asyncio, "sleep", new=AsyncMock()):
             await cog._complete_with_retry([], message, None, status)
 
         expected_retry = (
@@ -66,10 +61,7 @@ class AiChatRetryStatusTests(unittest.IsolatedAsyncioTestCase):
         message = _FakeMessage()
         status = DiscordRequestStatus(message, _FakeLogger())
 
-        with (
-            patch.object(ai_chat_module, "_is_retryable_api_error", return_value=True),
-            patch.object(ai_chat_module.asyncio, "sleep", new=AsyncMock()),
-        ):
+        with patch.object(ai_chat_module.asyncio, "sleep", new=AsyncMock()):
             await cog._complete_with_retry([], message, None, status)
 
         self.assertEqual(len(message.replies), 1)
@@ -77,10 +69,22 @@ class AiChatRetryStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(message.replies[0].deleted)
         self.assertIsNone(status.notice)
 
+    async def test_multimodal_provider_rejection_has_an_actionable_message(self):
+        error = ChatAPIError("provider rejected input", provider="test", status_code=422)
+
+        message = _user_error_message(error)
+
+        self.assertIn("模型無法處理", message)
+        self.assertIn("多模態", message)
+
 
 def _fake_cog(results):
     cog = AiChat.__new__(AiChat)
-    cog.gemini_client = SimpleNamespace(complete=_CompleteSequence(results))
+    cog.chat_client = SimpleNamespace(
+        complete=_CompleteSequence(results),
+        is_retryable_error=lambda exc: True,
+        provider_name="test",
+    )
     return cog
 
 

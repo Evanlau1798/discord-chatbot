@@ -43,7 +43,7 @@ class OpenSerpClientTests(unittest.TestCase):
                     query="example docs",
                     language="zh-TW",
                     region="TW",
-                    time_range="month",
+                    time_range="20260101..20260131",
                     site_domains=("example.com",),
                     desired_sources=3,
                 )
@@ -53,7 +53,8 @@ class OpenSerpClientTests(unittest.TestCase):
         self.assertIn("/mega/search?", request.full_url)
         self.assertIn("engines=google%2Cbing%2Cduckduckgo%2Cecosia", request.full_url)
         self.assertIn("mode=balanced", request.full_url)
-        self.assertIn("extract=3", request.full_url)
+        self.assertIn("extract=5", request.full_url)
+        self.assertIn("date=20260101..20260131", request.full_url)
         self.assertIn("site=example.com", request.full_url)
         self.assertEqual(response.failed_engines, ("google",))
         self.assertEqual(response.sources[0].cluster_score, 1.5)

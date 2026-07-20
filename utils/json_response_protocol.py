@@ -15,7 +15,7 @@ SEARCH_FAILURE_REPLY = (
     "我可以依這些線索換個方向搜尋。"
 )
 SEARCH_SOURCE_PROFILES = frozenset({"mixed", "official", "news", "technical", "reviews", "local"})
-IMAGE_GENERATION_OPERATIONS = frozenset({"create", "edit", "variation"})
+IMAGE_GENERATION_OPERATIONS = frozenset({"create", "edit"})
 IMAGE_SOURCE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*(?::[A-Za-z0-9_-]+)+$")
 MAX_IMAGE_SOURCE_IDS = 16
 
@@ -97,7 +97,7 @@ def build_repair_instruction() -> str:
     image_generation_enabled = is_image_generation_enabled()
     schema = '{"replyText":"..."'
     if image_generation_enabled:
-        schema += ',"imageGeneration":{"needed":true,"operation":"create|edit|variation","prompt":"...","sourceImageIds":["..."],"usePersonaIdentity":false}'
+        schema += ',"imageGeneration":{"needed":true,"operation":"create|edit","prompt":"...","sourceImageIds":["..."],"usePersonaIdentity":false}'
     schema += ',"memory":{"update":true,"content":"..."},"browser":{"search":{"queries":["..."],"language":"zh-TW","region":"TW","sourceProfile":"mixed","desiredSources":3},"youtubeSearchQuery":"..."}}'
     parts = [
         "你上一輪沒有正確遵守輸出格式。請只回傳單一 JSON 物件，不要 Markdown、不要說明文字。"
@@ -114,12 +114,12 @@ def build_repair_instruction() -> str:
     if image_generation_enabled:
         parts.append("除非使用者明確指示在圖片中加入特定文字，否則 imageGeneration.prompt 不要加入明文文字。")
         parts.append(
-            "imageGeneration.operation 使用 create 時不得輸出 sourceImageIds；使用 edit 或 variation 時必須從 "
+            "imageGeneration.operation 使用 create 時不得輸出 sourceImageIds；使用 edit 時必須從 "
             "payload.imageGenerationCandidates 選擇一個或多個 sourceImageIds。若找不到使用者指稱的原圖，"
             "請在 replyText 要求使用者重新附圖或直接回覆原圖，並省略 imageGeneration。"
         )
         parts.append(
-            "edit 或 variation 需要讓目前人設角色出現在結果中時，設定 usePersonaIdentity: true；"
+            "edit 需要讓目前人設角色出現在結果中時，設定 usePersonaIdentity: true；"
             "人設身份必須優先於來源圖片中的人物特徵且不得混合。一般圖片修改則省略或設為 false。"
         )
     parts.extend([
@@ -162,13 +162,13 @@ def _parse_image_generation(value) -> ImageGenerationBlock | None:
     prompt = _required_text(value.get("prompt"), "imageGeneration.prompt")
     operation = str(value.get("operation") or "create").strip().lower()
     if operation not in IMAGE_GENERATION_OPERATIONS:
-        raise ValueError("imageGeneration.operation must be create, edit, or variation")
+        raise ValueError("imageGeneration.operation must be create or edit")
     source_image_ids = _parse_image_source_ids(value.get("sourceImageIds"))
     use_persona_identity = _optional_bool(value.get("usePersonaIdentity", False), "imageGeneration.usePersonaIdentity")
     if operation == "create" and source_image_ids:
         raise ValueError("imageGeneration.sourceImageIds must be omitted for create")
-    if operation in {"edit", "variation"} and not source_image_ids:
-        raise ValueError("imageGeneration.sourceImageIds is required for edit or variation")
+    if operation == "edit" and not source_image_ids:
+        raise ValueError("imageGeneration.sourceImageIds is required for edit")
     return ImageGenerationBlock(
         needed=True,
         prompt=prompt,

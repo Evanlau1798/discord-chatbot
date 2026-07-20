@@ -4,6 +4,7 @@ import io
 import unittest
 from unittest.mock import patch
 
+from utils import chat_media
 from utils import gemini_api
 from utils.gif_frame_sampler import GifFrameSample, GifFrameSamplingResult
 from utils.media_frame_splitter import MediaFrame, MediaSplitResult
@@ -25,6 +26,26 @@ class FakeGenaiTypes:
 
 
 class GeminiApiTests(unittest.TestCase):
+    def test_complete_uses_persona_cache_owned_by_client(self):
+        client = GeminiChatClient.__new__(GeminiChatClient)
+        client.persona_cache_names = {"akira": "cached/akira"}
+
+        with patch.object(client, "_complete_once", return_value="response") as complete_once:
+            response = client.complete([], persona_key="akira")
+
+        self.assertEqual(response, "response")
+        complete_once.assert_called_once_with([], temperature=0.7, cached_content="cached/akira")
+
+    def test_non_retryable_persona_cache_error_falls_back_without_cache(self):
+        client = GeminiChatClient.__new__(GeminiChatClient)
+        client.persona_cache_names = {"akira": "cached/akira"}
+
+        with patch.object(client, "_complete_once", side_effect=[ValueError("cache invalid"), "response"]) as complete_once:
+            response = client.complete([], persona_key="akira")
+
+        self.assertEqual(response, "response")
+        self.assertEqual(complete_once.call_args_list[1].kwargs["cached_content"], None)
+
     def test_convert_parts_accepts_inline_image_bytes(self):
         client = GeminiChatClient.__new__(GeminiChatClient)
         content = [
@@ -56,7 +77,7 @@ class GeminiApiTests(unittest.TestCase):
 
         with (
             patch.object(gemini_api, "genai_types", FakeGenaiTypes),
-            patch.object(gemini_api, "sample_gif_frames", return_value=sampling),
+            patch.object(chat_media, "sample_gif_frames", return_value=sampling),
         ):
             parts = client._convert_parts(content)
 
@@ -85,7 +106,7 @@ class GeminiApiTests(unittest.TestCase):
 
         with (
             patch.object(gemini_api, "genai_types", FakeGenaiTypes),
-            patch.object(gemini_api, "sample_apng_frames", return_value=sampling, create=True),
+            patch.object(chat_media, "sample_apng_frames", return_value=sampling),
         ):
             parts = client._convert_parts(content)
 
@@ -114,7 +135,7 @@ class GeminiApiTests(unittest.TestCase):
 
         with (
             patch.object(gemini_api, "genai_types", FakeGenaiTypes),
-            patch.object(gemini_api, "sample_webp_frames", return_value=sampling, create=True),
+            patch.object(chat_media, "sample_webp_frames", return_value=sampling),
         ):
             parts = client._convert_parts(content)
 
@@ -164,7 +185,7 @@ class GeminiApiTests(unittest.TestCase):
 
         with (
             patch.object(gemini_api, "genai_types", FakeGenaiTypes),
-            patch.object(gemini_api, "split_video_bytes", return_value=split_result),
+            patch.object(chat_media, "split_video_bytes", return_value=split_result),
         ):
             parts = client._convert_parts(content)
 

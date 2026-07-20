@@ -105,13 +105,14 @@ def _json_output_rules(image_generation_enabled: bool) -> str:
     ]
     if image_generation_enabled:
         parts.append(
-            '需要生圖時才輸出 imageGeneration: {needed: true, operation: "create" | "edit" | "variation", '
+            '需要生圖時才輸出 imageGeneration: {needed: true, operation: "create" | "edit", '
             'prompt: ..., sourceImageIds: [...], usePersonaIdentity: boolean}；不需要時省略整個區塊。'
             'create 不得包含 sourceImageIds。'
         )
     parts.extend([
-        "需要上網查詢最新資料、一般網路資訊或未提供 URL 的資料時，優先輸出 browser: {search: {queries: [...], language: zh-TW, region: TW, timeRange: ..., siteDomains: [...], sourceProfile: mixed, desiredSources: 3}}；"
-        "language、region、timeRange、siteDomains 只在能從需求確定時填寫；sourceProfile 只能是 mixed、official、news、technical、reviews、local，desiredSources 限 3 到 5；舊格式 searchQuery/searchQueries 仍可使用。此時可省略 replyText。"
+        "需要上網查詢最新資料、一般網路資訊或未提供 URL 的資料時，優先輸出 browser: {search: {queries: [...], language: zh-TW, region: TW, timeRange: \"YYYYMMDD..YYYYMMDD\", siteDomains: [...], sourceProfile: mixed, desiredSources: 3}}；"
+        "language、region、siteDomains 只在能從需求確定時填寫；timeRange 只用於新聞、公告、版本等有發佈日期的內容，格式固定為 YYYYMMDD..YYYYMMDD。"
+        "sourceProfile 只能是 mixed、official、news、technical、reviews、local，desiredSources 限 3 到 5；舊格式 searchQuery/searchQueries 仍可使用。此時可省略 replyText。"
         "需要搜尋 YouTube 影片、yt 影片、shorts 或剪輯連結時，優先輸出 browser: {youtubeSearchQuery: ...}；此時可省略 replyText。"
         "如果使用者內容需要網頁搜尋或最新資料，第一輪不要先輸出 replyText、不要用人設語氣鋪陳，"
         "直接輸出 browser.search.queries、browser.searchQuery、browser.searchQueries 或 browser.youtubeSearchQuery 的精簡查詢關鍵字；收到 browserResults 後才依人設輸出最終 replyText。",
@@ -135,12 +136,13 @@ def _search_query_rules() -> str:
         "每個 query 都必須脫離目前對話後仍能單獨理解；請根據 currentConversationTarget、serverHistory、DM history 與本輪內容，"
         "把『他、她、它、那個、這個、那家公司、那款產品』等代名詞或省略主詞補成已確認的具體人物、事件、產品、地點與時間範圍。"
         "若上下文存在多個合理指涉對象，不可自行選定；請先在 replyText 詢問使用者要查哪一個對象，不要輸出 browser。"
-        "依需求選擇 sourceProfile：政府公告、法規、價格與規格用 official；即時事件用 news；軟體與工程資料用 technical；"
+        "依需求選擇 sourceProfile：政府公告、法規、價格與規格用 official；即時天氣、預報、警報與政府即時資料也用 official，"
+        "並在 query 加入已確認的主管機關或官方服務名稱。動態官方頁面不要套用發佈日期 timeRange；即時事件用 news；軟體與工程資料用 technical；"
         "使用心得與口碑用 reviews；店家、景點與在地資訊用 local；需要官方資料與實際經驗交叉比較時用 mixed。"
         "若使用者要找海外人物、遊戲、實況主、影片、梗圖或片段，必須加入常用英文名稱、ID、隊名、作品英文名或平台常用稱呼；"
         "短暱稱、多義詞或單字代稱太泛時，不要只搜尋該詞；請搭配使用者已提供的領域、作品、平台、隊伍、內容類型與語意線索。"
         "若不知道正式全名、帳號或 ID，請不要自行猜測；改用上下文限定詞提高精準度。"
-        "優先輸出 1 個精準英文 query，最多 3 個 query，必要時保留 1 個使用者原語言 query。"
+        "海外資料優先輸出 1 個精準英文 query；地方政府、天氣、店家與在地資訊優先使用當地語言，最多 3 個 query。"
         "如果輸出多個 query，第一個 query 必須是最精準且可單獨執行的主查詢；"
         "不要把不同語言備援、寬泛同義詞或 fallback 混進第一個 query。"
         "將口語描述改寫成英文常見說法與同義詞"
@@ -172,8 +174,8 @@ def _image_rules() -> str:
         "payload.imageGenerationCandidates 是本輪可安全用於繪圖的圖片候選，每個候選都有不可自行編造的 id。"
         "純文字從零生圖使用 operation=create。只要使用者要求修改、延伸、合併、參考本輪附件、回覆圖片、"
         "Discord 訊息連結圖片或明確提到之前的候選圖片，就使用 operation=edit 並列出實際 sourceImageIds。"
-        "使用者要求再來一張相似版本時使用 operation=variation 並列出 sourceImageIds。"
-        "當 edit 或 variation 的結果需要包含目前人設角色，例如使用者要求畫『你』、人設角色、"
+        "使用者要求以既有圖片再做一張相似版本時也使用 operation=edit 並列出 sourceImageIds。"
+        "當 edit 的結果需要包含目前人設角色，例如使用者要求畫『你』、人設角色、"
         "或把目前角色放進來源圖的場景時，必須設定 usePersonaIdentity=true。此時人設角色的臉、髮型、"
         "髮色、眼睛、體態、服裝與其他身份特徵優先於來源圖人物，不得混合兩者。來源圖僅用於使用者要求的"
         "場景、構圖、鏡位、姿勢、物件或畫風參考。一般圖片修改或保留來源人物時，省略 usePersonaIdentity"

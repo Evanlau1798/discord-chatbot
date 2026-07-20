@@ -6,8 +6,10 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from dataclasses import replace
+from datetime import date, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from utils.browser_actions import normalize_search_queries
@@ -29,6 +31,26 @@ _GLOBAL_SEARCH_LIMITER = threading.BoundedSemaphore(3)
 _TRACKING_PARAMETERS = {"fbclid", "gclid", "msclkid", "ref", "ref_src"}
 _UNSAFE_TLDS = {"adult", "porn", "sex", "sexy", "xxx"}
 _UNSAFE_HOST_TOKENS = {"hentai", "hqtube", "porn", "porno", "redtube", "xnxx", "xvideos", "xxx"}
+_AUTHORITY_SIGNALS = {"gov", "edu", "mil", "academic", "document"}
+_LOW_TRUST_SIGNALS = {"encyclopedia", "forum", "marketplace", "social", "social_forum", "social_media"}
+_RELATIVE_TIME_RANGES = {
+    "day": 0,
+    "today": 0,
+    "24h": 0,
+    "今天": 0,
+    "week": 6,
+    "7d": 6,
+    "一週": 6,
+    "month": 29,
+    "30d": 29,
+    "一個月": 29,
+    "year": 364,
+    "365d": 364,
+    "一年": 364,
+}
+_DATE_TOKEN_PATTERN = re.compile(r"(?<!\d)(\d{4})[-/.]?(\d{1,2})[-/.]?(\d{1,2})(?!\d)")
+_CJK_PATTERN = re.compile(r"[\u3400-\u9fff]+")
+_LATIN_TERM_PATTERN = re.compile(r"[a-z0-9][a-z0-9_.+-]*")
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +86,10 @@ class SearchPlanner:
             time_range=self.time_range,
             desired_sources=self.desired_sources,
         )
+        normalized_time_range = normalize_openserp_time_range(resolved.time_range)
+        if resolved.time_range and not normalized_time_range:
+            logger.warning("openserp.invalid_time_range_ignored")
+        resolved = replace(resolved, time_range=normalized_time_range)
         responses = await asyncio.gather(*(asyncio.to_thread(self._search_limited, query, resolved) for query in planned))
         candidates = [
             (query, source)
@@ -80,18 +106,30 @@ class SearchPlanner:
         diagnostics = tuple(item for response in responses for item in response.diagnostics)
         source_chars = sum(len(source.text) for _query, source in candidates)
         selected_chars = sum(len(source.text) for source in selected)
+        distinct_domains = _distinct_source_count(selected)
+        has_reliable_sources = (
+            distinct_domains >= MIN_RELIABLE_SOURCES
+            or _has_first_party_source(selected, resolved.site_domains)
+            or _has_single_authoritative_source(selected, resolved.source_profile, resolved.site_domains)
+        )
         logger.info(
             "openserp.search_complete queries=%s candidates=%s selected=%s failed_engines=%s "
-            "captcha=%s elapsed_ms=%s truncated_chars=%s",
+            "captcha=%s elapsed_ms=%s selected_chars=%s truncated_chars=%s distinct_domains=%s "
+            "returned_readable=%s source_profile=%s time_range_applied=%s",
             len(planned),
             len(candidates),
             len(selected),
             ",".join(failed_engines) or "none",
             any("captcha" in item.lower() for item in diagnostics),
             round((time.monotonic() - started_at) * 1000),
+            selected_chars,
             max(0, source_chars - selected_chars),
+            distinct_domains,
+            len(selected) if has_reliable_sources else 0,
+            resolved.source_profile,
+            bool(resolved.time_range),
         )
-        if _distinct_source_count(selected) < MIN_RELIABLE_SOURCES and not _has_first_party_source(selected, resolved.site_domains):
+        if not has_reliable_sources:
             errors = tuple(response.error for response in responses if response.error)
             return [_unreliable_result(planned, diagnostics, errors)]
         return [_browser_result(source, planned) for source in selected]
@@ -128,7 +166,7 @@ def select_reliable_sources(
         if not canonical or not source.text.strip() or _is_unsafe_source(canonical) or _is_query_conflict(query, canonical):
             continue
         normalized = replace(source, url=canonical)
-        if _relevance_score(query, normalized) == 0:
+        if not _is_relevant(query, normalized):
             continue
         current = merged.get(canonical)
         if current is None or _source_score(query, normalized, site_domains, source_profile) > _source_score(current[0], current[1], site_domains, source_profile):
@@ -138,6 +176,7 @@ def select_reliable_sources(
         key=lambda item: _source_score(item[0], item[1], site_domains, source_profile),
         reverse=True,
     )
+    ranked = _preferred_profile_candidates(ranked, site_domains, source_profile)
     ranked = _diversify_domains(ranked)
     selected = []
     remaining = max(0, int(total_chars))
@@ -178,6 +217,26 @@ def plan_search_queries_from_env(queries: list[str]) -> list[str]:
     return normalize_search_queries(queries)[:maximum]
 
 
+def normalize_openserp_time_range(value: str, *, today: date | None = None) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return ""
+    current = today or date.today()
+    if normalized in _RELATIVE_TIME_RANGES:
+        start = current - timedelta(days=_RELATIVE_TIME_RANGES[normalized])
+        return f"{start:%Y%m%d}..{current:%Y%m%d}"
+    parts = normalized.split("..")
+    if len(parts) == 1:
+        parsed = _parse_date_token(parts[0])
+        return f"{parsed:%Y%m%d}..{parsed:%Y%m%d}" if parsed else ""
+    if len(parts) != 2:
+        return ""
+    start, end = (_parse_date_token(part) for part in parts)
+    if start is None or end is None or start > end:
+        return ""
+    return f"{start:%Y%m%d}..{end:%Y%m%d}"
+
+
 def _source_score(
     query: str,
     source: OpenSerpSource,
@@ -188,9 +247,17 @@ def _source_score(
     official = any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
     relevance = _relevance_score(query, source)
     signals = _source_signals(source)
-    authority = bool(signals & {"gov", "edu", "mil", "academic", "document"})
+    authority = bool(signals & _AUTHORITY_SIGNALS)
     rank = source.rank if source.rank > 0 else 10_000
-    return official, _profile_score(signals, source_profile), authority, source.cluster_score, relevance, -rank
+    return (
+        official,
+        _profile_score(signals, source_profile),
+        authority,
+        _trust_score(signals, source_profile),
+        relevance,
+        source.cluster_score,
+        -rank,
+    )
 
 
 def _source_signals(source: OpenSerpSource) -> set[str]:
@@ -207,6 +274,8 @@ def _source_signals(source: OpenSerpSource) -> set[str]:
         signals.add("code_repository")
     if hostname in {"stackoverflow.com", "stackexchange.com"} or hostname.endswith(".stackexchange.com"):
         signals.add("qa_forum")
+    if hostname == "wikipedia.org" or hostname.endswith(".wikipedia.org"):
+        signals.add("encyclopedia")
     if ".gov." in hostname or hostname.endswith(".gov"):
         signals.add("gov")
     signals.discard("")
@@ -225,6 +294,30 @@ def _profile_score(signals: set[str], source_profile: str) -> int:
         },
     }
     return int(bool(signals & preferred.get(source_profile, preferred["mixed"])))
+
+
+def _trust_score(signals: set[str], source_profile: str) -> int:
+    if signals & _AUTHORITY_SIGNALS:
+        return 1
+    if source_profile in {"official", "news", "technical", "mixed"} and signals & _LOW_TRUST_SIGNALS:
+        return -1
+    return 0
+
+
+def _preferred_profile_candidates(ranked, site_domains: tuple[str, ...], source_profile: str):
+    if source_profile != "official":
+        return ranked
+    authoritative = [item for item in ranked if _is_authoritative_source(item[1], site_domains)]
+    if not authoritative:
+        return ranked
+    unique = []
+    seen_domains = set()
+    for item in authoritative:
+        domain = _source_domain(item[1])
+        if domain not in seen_domains:
+            unique.append(item)
+            seen_domains.add(domain)
+    return unique
 
 
 def _diversify_domains(ranked: list[tuple[str, OpenSerpSource]]) -> list[tuple[str, OpenSerpSource]]:
@@ -249,23 +342,59 @@ def _source_domain(source: OpenSerpSource) -> str:
 
 
 def _relevance_score(query: str, source: OpenSerpSource) -> int:
-    raw_terms = re.findall(r"[\w-]+", query.lower())
-    query_terms = {
-        term
-        for term in raw_terms
-        if len(term) >= 3 or (len(term) >= 2 and any("\u4e00" <= char <= "\u9fff" for char in term))
-    }
+    query_terms = _query_terms(query)
     if not query_terms:
         return 1
-    haystack = f"{source.title} {source.snippet} {source.domain}".lower()
-    haystack_terms = set(re.findall(r"[a-z0-9_-]+", haystack))
+    haystack = _normalize_search_text(f"{source.title} {source.snippet} {source.domain}")
+    haystack_terms = set(_LATIN_TERM_PATTERN.findall(haystack))
     score = 0
     for term in query_terms:
-        if any("\u4e00" <= char <= "\u9fff" for char in term):
+        if _contains_cjk(term):
             score += int(term in haystack)
         else:
             score += int(term in haystack_terms)
     return score
+
+
+def _is_relevant(query: str, source: OpenSerpSource) -> bool:
+    terms = _query_terms(query)
+    if not terms:
+        return True
+    required_matches = 1 if len(terms) <= 2 else 2
+    return _relevance_score(query, source) >= required_matches
+
+
+def _query_terms(query: str) -> set[str]:
+    normalized = _DATE_TOKEN_PATTERN.sub(" ", _normalize_search_text(query))
+    terms = {
+        term
+        for term in _LATIN_TERM_PATTERN.findall(normalized)
+        if len(term) >= 3 and not term.isdigit()
+    }
+    for run in _CJK_PATTERN.findall(normalized):
+        if len(run) == 2:
+            terms.add(run)
+        elif len(run) > 2:
+            terms.update(run[index:index + 2] for index in range(len(run) - 1))
+    return terms
+
+
+def _normalize_search_text(value: str) -> str:
+    return unicodedata.normalize("NFKC", str(value or "")).lower().replace("臺", "台")
+
+
+def _contains_cjk(value: str) -> bool:
+    return any("\u3400" <= char <= "\u9fff" for char in value)
+
+
+def _parse_date_token(value: str) -> date | None:
+    matched = _DATE_TOKEN_PATTERN.fullmatch(str(value or "").strip())
+    if matched is None:
+        return None
+    try:
+        return date(*(int(part) for part in matched.groups()))
+    except ValueError:
+        return None
 
 
 def _has_first_party_source(sources: list[OpenSerpSource], site_domains: tuple[str, ...]) -> bool:
@@ -273,6 +402,22 @@ def _has_first_party_source(sources: list[OpenSerpSource], site_domains: tuple[s
         return False
     hostname = (urlsplit(sources[0].url).hostname or "").lower()
     return any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
+
+
+def _has_single_authoritative_source(
+    sources: list[OpenSerpSource], source_profile: str, site_domains: tuple[str, ...]
+) -> bool:
+    return (
+        source_profile == "official"
+        and len(sources) == 1
+        and _is_authoritative_source(sources[0], site_domains)
+    )
+
+
+def _is_authoritative_source(source: OpenSerpSource, site_domains: tuple[str, ...]) -> bool:
+    hostname = (urlsplit(source.url).hostname or "").lower()
+    explicit = any(hostname == domain.lower() or hostname.endswith(f".{domain.lower()}") for domain in site_domains)
+    return explicit or bool(_source_signals(source) & _AUTHORITY_SIGNALS)
 
 
 def _is_unsafe_source(url: str) -> bool:

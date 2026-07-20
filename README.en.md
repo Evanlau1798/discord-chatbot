@@ -58,8 +58,8 @@ The main usage is simple:
 
 - Python 3.9+
 - Discord Bot token
-- Google GenAI API key
-- OpenSERP search service built from the pinned `reference/openserp` source
+- API key for the selected model provider (optional for local OpenAI-compatible services)
+- OpenSERP search service using the stable release image pinned by the startup script
 - `yt-dlp` for YouTube transcripts and video search
 - `ffmpeg` / `ffprobe` for video attachment frame sampling
 - Patchright Chromium for browser fallback
@@ -93,9 +93,35 @@ Minimum required variables:
 
 ```env
 DISCORD_BOT_TOKEN=...
+AI_CHAT_PROVIDER=gemini
 GEMINI_API_KEY=...
 MEMORY_ENCRYPTION_KEY=...
 ```
+
+`AI_CHAT_PROVIDER` accepts `gemini`, `nvidia`, or `openai_compatible`. Gemini remains the default when it is unset.
+
+NVIDIA API Catalog defaults to `https://integrate.api.nvidia.com/v1`; the base URL may also point to a self-hosted NIM:
+
+```env
+AI_CHAT_PROVIDER=nvidia
+NVIDIA_API_KEY=...
+NVIDIA_MODEL=model-id
+```
+
+`.env.example` already provides practical defaults for message strategy, thinking, output length, NVCF, OpenSERP, YT-DLP, video, and ASR. Initial setup normally requires only the secrets; image generation remains disabled by default.
+
+NVIDIA API Catalog does not expose Gemini-style `cachedContents` create, read, or delete operations, so this project does not emulate NVIDIA cache resources or cache completed responses locally. Self-hosted NIM deployments can enable transparent prefix/KV reuse with `NIM_ENABLE_KV_CACHE_REUSE=1`; this primarily improves time to first token for repeated long prefixes and does not imply an API Catalog cached-token billing discount. API Catalog is a trial service rather than a production subscription. See the [NVIDIA NIM KV cache configuration](https://docs.nvidia.com/nim/large-language-models/1.12.0/configuration.html) and [NVIDIA API Trial Terms](https://assets.ngc.nvidia.com/products/api-catalog/legal/NVIDIA%20API%20Trial%20Terms%20of%20Service.pdf).
+
+Use these settings for a generic OpenAI-compatible `/chat/completions` service. Leave the key empty for localhost services that do not require authentication:
+
+```env
+AI_CHAT_PROVIDER=openai_compatible
+OPENAI_COMPAT_API_KEY=
+OPENAI_COMPAT_BASE_URL=http://127.0.0.1:8000/v1
+OPENAI_COMPAT_MODEL=model-id
+```
+
+Images are sent as standard `image_url` or base64 data URLs. Videos are sampled and presented as contact sheets. The selected model must support vision input or the provider will return a model error. Exhausting retries never sends the conversation to another provider automatically.
 
 Generate `MEMORY_ENCRYPTION_KEY`:
 
@@ -106,7 +132,7 @@ print(Fernet.generate_key().decode())
 PY
 ```
 
-See [.env.example](.env.example) for all available variables.
+See [.env.example](.env.example) for the complete ready-to-use defaults.
 
 Discord message handling runs 3 requests concurrently by default. This is async concurrency, not OS thread count:
 
@@ -130,9 +156,9 @@ YOUTUBE_SEARCH_QUERY_COOLDOWN_SECONDS=1
 YTDLP_SEARCH_SLEEP_REQUESTS=1
 ```
 
-OpenSERP queries multiple engines in parallel, deduplicates results, and extracts the top 3–5 sources. The bot permits at most 3 concurrent OpenSERP requests. Google is globally limited to one request per second by the service; a CAPTCHA ends that Google attempt without blocking partial results from other engines.
+OpenSERP queries multiple engines in parallel, deduplicates results, and extracts up to 5 candidate pages before the bot selects 3–5 sources by relevance, source profile, and domain diversity. `OPENSERP_TIME_RANGE` is only for publication-dated content and accepts `today`, `week`, `month`, `year`, or `YYYYMMDD..YYYYMMDD`; leave it blank for dynamic pages such as live weather dashboards. The bot permits at most 3 concurrent OpenSERP requests. Google is globally limited to one request per second by the service; a CAPTCHA ends that Google attempt without blocking partial results from other engines.
 
-Place the pinned source at `reference/openserp`, then run `./start_openserp.sh`. The service maps only to `127.0.0.1:17000` and disables CORS, request-supplied proxy URLs, and CAPTCHA solving by default. Stop it with `./stop_openserp.sh`.
+Run `./start_openserp.sh` to use the official stable release `0.8.6`, pinned by its image manifest digest. The script does not build from `main`, `latest`, or the local `reference/openserp` checkout. The service maps only to `127.0.0.1:17000` and disables CORS, request-supplied proxy URLs, and CAPTCHA solving by default. Future stable upgrades require an explicit release and digest update in the script. Stop it with `./stop_openserp.sh`.
 YouTube search continues to use its separate `yt-dlp` queue, with one query per turn and a one-second request interval by default.
 
 To enable image generation, set `AI_IMAGINE_ENABLED=1`, `AI_IMAGINE_BASE_URL`, `AI_IMAGINE_API_KEY`, and `AI_IMAGINE_MODEL` in `.env`. When disabled, the bot does not ask the model to output `imageGeneration`.
